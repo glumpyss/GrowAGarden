@@ -6,7 +6,7 @@ import copy
 
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 autostock_channel = None
 autostock_enabled = False
@@ -22,7 +22,7 @@ def format_items(items):
         return "None"
     return "\n".join(f"**{item.get('name', 'Unknown')}**: {item.get('value', 0)}" for item in items)
 
-def create_stock_embed(data, author):
+def create_stock_embed(data, author=None):
     embed = discord.Embed(
         title="🌱 Grow A Garden - Stock",
         color=discord.Color.green()
@@ -80,17 +80,16 @@ async def check_stock():
                 new_seed_stock = data.get("seedsStock", [])
                 if previous_stock != new_seed_stock:
                     previous_stock = copy.deepcopy(new_seed_stock)
-                    embed = create_stock_embed(data, None)
+                    embed = create_stock_embed(data)
                     await autostock_channel.send(embed=embed)
 
 # Moderation commands
-
 @bot.command()
 @commands.has_permissions(kick_members=True)
 async def kick(ctx, member: discord.Member, *, reason=None):
     try:
         await member.kick(reason=reason)
-        await ctx.send(f"✅ {member} has been kicked. Reason: {reason if reason else 'No reason provided.'}")
+        await ctx.send(f"✅ Kicked {member} for: {reason if reason else 'No reason provided.'}")
     except Exception as e:
         await ctx.send(f"❌ Could not kick {member}. Error: {e}")
 
@@ -99,56 +98,58 @@ async def kick(ctx, member: discord.Member, *, reason=None):
 async def ban(ctx, member: discord.Member, *, reason=None):
     try:
         await member.ban(reason=reason)
-        await ctx.send(f"✅ {member} has been banned. Reason: {reason if reason else 'No reason provided.'}")
+        await ctx.send(f"✅ Banned {member} for: {reason if reason else 'No reason provided.'}")
     except Exception as e:
         await ctx.send(f"❌ Could not ban {member}. Error: {e}")
 
 @bot.command()
-@commands.has_permissions(manage_messages=True)
-async def clear(ctx, amount: int):
-    try:
-        deleted = await ctx.channel.purge(limit=amount)
-        await ctx.send(f"🧹 Deleted {len(deleted)} messages.", delete_after=5)
-    except Exception as e:
-        await ctx.send(f"❌ Could not delete messages. Error: {e}")
-
-@bot.command()
 @commands.has_permissions(manage_roles=True)
-async def mute(ctx, member: discord.Member):
-    role = discord.utils.get(ctx.guild.roles, name="Muted")
-    if role is None:
-        # Create Muted role if it doesn't exist
-        role = await ctx.guild.create_role(name="Muted")
-        for channel in ctx.guild.channels:
-            await channel.set_permissions(role, speak=False, send_messages=False, read_message_history=True, read_messages=False)
-    await member.add_roles(role)
-    await ctx.send(f"🔇 {member} has been muted.")
+async def mute(ctx, member: discord.Member, *, reason=None):
+    guild = ctx.guild
+    muted_role = discord.utils.get(guild.roles, name="Muted")
+    if muted_role is None:
+        try:
+            muted_role = await guild.create_role(name="Muted", reason="Mute role needed for muting members.")
+            for channel in guild.channels:
+                await channel.set_permissions(muted_role, speak=False, send_messages=False, add_reactions=False)
+        except Exception as e:
+            await ctx.send(f"❌ Failed to create 'Muted' role. Error: {e}")
+            return
+    try:
+        await member.add_roles(muted_role, reason=reason)
+        await ctx.send(f"✅ Muted {member} for: {reason if reason else 'No reason provided.'}")
+    except Exception as e:
+        await ctx.send(f"❌ Could not mute {member}. Error: {e}")
 
 @bot.command()
 @commands.has_permissions(manage_roles=True)
 async def unmute(ctx, member: discord.Member):
-    role = discord.utils.get(ctx.guild.roles, name="Muted")
-    if role:
-        await member.remove_roles(role)
-        await ctx.send(f"🔊 {member} has been unmuted.")
-    else:
-        await ctx.send("❌ Muted role does not exist.")
+    guild = ctx.guild
+    muted_role = discord.utils.get(guild.roles, name="Muted")
+    if muted_role is None:
+        await ctx.send("❌ No 'Muted' role found.")
+        return
+    try:
+        await member.remove_roles(muted_role)
+        await ctx.send(f"✅ Unmuted {member}.")
+    except Exception as e:
+        await ctx.send(f"❌ Could not unmute {member}. Error: {e}")
 
-# Help command
-@bot.command()
-async def help(ctx):
+# Custom help command
+@bot.command(name="help")
+async def help_command(ctx):
     embed = discord.Embed(
-        title="Bot Commands Help",
+        title="Help Menu",
+        description="Here are the available commands:",
         color=discord.Color.blue()
     )
-    embed.add_field(name="!seeds", value="Show current Grow A Garden stock.", inline=False)
-    embed.add_field(name="!autostock on/off", value="Toggle automatic stock updates. Requires Manage Roles permission.", inline=False)
-    embed.add_field(name="Moderation Commands:", value="(Require appropriate permissions)", inline=False)
-    embed.add_field(name="!kick @user [reason]", value="Kick a user.", inline=False)
-    embed.add_field(name="!ban @user [reason]", value="Ban a user.", inline=False)
-    embed.add_field(name="!clear <number>", value="Delete recent messages.", inline=False)
-    embed.add_field(name="!mute @user", value="Mute a user.", inline=False)
-    embed.add_field(name="!unmute @user", value="Unmute a user.", inline=False)
+    embed.add_field(name="!seeds", value="Shows current Grow A Garden stock info.", inline=False)
+    embed.add_field(name="!autostock on/off", value="Toggle automatic stock updates in this channel. Requires Manage Roles permission.", inline=False)
+    embed.add_field(name="!kick @user [reason]", value="Kick a member. Requires Kick Members permission.", inline=False)
+    embed.add_field(name="!ban @user [reason]", value="Ban a member. Requires Ban Members permission.", inline=False)
+    embed.add_field(name="!mute @user [reason]", value="Mute a member. Requires Manage Roles permission.", inline=False)
+    embed.add_field(name="!unmute @user", value="Unmute a member. Requires Manage Roles permission.", inline=False)
+    embed.set_footer(text=f"Bot by summer 2000")
     await ctx.send(embed=embed)
 
 import os
