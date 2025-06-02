@@ -11,7 +11,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 autostock_channel = None
 autostock_enabled = False
-previous_stock = {}
+previous_stock = None
 
 @bot.event
 async def on_ready():
@@ -81,20 +81,11 @@ async def check_stock():
                 if not data.get("success", False):
                     return
 
-                current_stock = {
-                    "seedsStock": data.get("seedsStock", []),
-                    "gearStock": data.get("gearStock", []),
-                    "eggStock": data.get("eggStock", []),
-                    "BeeStock": data.get("BeeStock", []),
-                    "cosmeticsStock": data.get("cosmeticsStock", []),
-                }
-
-                if current_stock != previous_stock:
-                    previous_stock = copy.deepcopy(current_stock)
+                if previous_stock != data:
+                    previous_stock = copy.deepcopy(data)
                     embed = create_stock_embed(data, None)
                     await autostock_channel.send(embed=embed)
 
+# Run bot with token (make sure to set DISCORD_TOKEN in environment variables)
 bot.run(os.getenv("DISCORD_TOKEN"))
-
-
 
