@@ -5,14 +5,11 @@ import asyncio
 import copy
 import datetime
 import os
-import time
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
-
-start_time = time.time()
 
 autostock_channel = None
 autostock_enabled = False
@@ -21,24 +18,13 @@ last_update_time = None
 restock_log = []
 ping_role_id = None
 autorole_id = None
-logging_channel_id = None
+log_channel_id = None  # For error logging
+start_time = datetime.datetime.utcnow()  # Bot start time for uptime
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
     check_stock.start()
-
-@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, commands.CommandOnCooldown):
-        await ctx.send(f"⏳ This command is on cooldown. Try again in {error.retry_after:.1f} seconds.")
-        return
-
-    if logging_channel_id:
-        channel = bot.get_channel(logging_channel_id)
-        if channel:
-            await channel.send(f"⚠️ Error in `{ctx.command}`:
-```{str(error)}```")
 
 @bot.event
 async def on_member_join(member):
@@ -68,7 +54,7 @@ def create_stock_embed(data, author=None):
     return embed
 
 @bot.command()
-@commands.cooldown(1, 10, commands.BucketType.user)
+@commands.cooldown(1, 5, commands.BucketType.user)
 async def seeds(ctx):
     url = "https://growagardenapi.vercel.app/api/stock/GetStock"
     async with aiohttp.ClientSession() as session:
@@ -204,25 +190,108 @@ async def autorole(ctx, role: discord.Role):
     await ctx.send(f"👤 Auto-role set to {role.mention} for new members.")
 
 @bot.command()
-@commands.has_permissions(administrator=True)
-async def loggingchannel(ctx):
-    global logging_channel_id
-    overwrites = {
-        ctx.guild.default_role: discord.PermissionOverwrite(read_messages=False),
-        ctx.guild.me: discord.PermissionOverwrite(read_messages=True)
-    }
-    channel = await ctx.guild.create_text_channel("bot-error-logs", overwrites=overwrites)
-    logging_channel_id = channel.id
-    await ctx.send(f"📋 Logging channel created: {channel.mention}")
+@commands.has_permissions(manage_channels=True)
+async def setlogchannel(ctx, channel: discord.TextChannel):
+    global log_channel_id
+    log_channel_id = channel.id
+    await ctx.send(f"📄 Log channel set to {channel.mention}.")
+
+# Kick, ban, mute, unmute
+@bot.command()
+@commands.has_permissions(kick_members=True)
+async def kick(ctx, member: discord.Member, *, reason=None):
+    try:
+        await member.kick(reason=reason)
+        await ctx.send(f"✅ Kicked {member} for: {reason or 'No reason provided.'}")
+    except Exception as e:
+        await ctx.send(f"❌ Could not kick {member}. Error: {e}")
+
+@bot.command()
+@commands.has_permissions(ban_members=True)
+async def ban(ctx, member: discord.Member, *, reason=None):
+    try:
+        await member.ban(reason=reason)
+        await ctx.send(f"✅ Banned {member} for: {reason or 'No reason provided.'}")
+    except Exception as e:
+        await ctx.send(f"❌ Could not ban {member}. Error: {e}")
+
+@bot.command()
+@commands.has_permissions(manage_roles=True)
+async def mute(ctx, member: discord.Member, *, reason=None):
+    muted_role = discord.utils.get(ctx.guild.roles, name="Muted")
+    if not muted_role:
+        try:
+            muted_role = await ctx.guild.create_role(name="Muted")
+            for channel in ctx.guild.channels:
+                await channel.set_permissions(muted_role, speak=False, send_messages=False, add_reactions=False)
+        except Exception as e:
+            await ctx.send(f"❌ Failed to create 'Muted' role. Error: {e}")
+            return
+    try:
+        await member.add_roles(muted_role, reason=reason)
+        await ctx.send(f"✅ Muted {member} for: {reason or 'No reason provided.'}")
+    except Exception as e:
+        await ctx.send(f"❌ Could not mute {member}. Error: {e}")
+
+@bot.command()
+@commands.has_permissions(manage_roles=True)
+async def unmute(ctx, member: discord.Member):
+    muted_role = discord.utils.get(ctx.guild.roles, name="Muted")
+    if not muted_role:
+        await ctx.send("❌ No 'Muted' role found.")
+        return
+    try:
+        await member.remove_roles(muted_role)
+        await ctx.send(f"✅ Unmuted {member}.")
+    except Exception as e:
+        await ctx.send(f"❌ Could not unmute {member}. Error: {e}")
+
+@bot.command(name="help")
+async def help_command(ctx):
+    embed = discord.Embed(
+        title="Help Menu",
+        description="Here are the available commands:",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="Grow A Garden", value="`!seeds`, `!stock [category]`, `!autostock on/off`, `!lastupdate`, `!restocklog`, `!setpingrole @role`, `!faq`, `!uptime`, `!setlogchannel #channel`", inline=False)
+    embed.add_field(name="Moderation", value="`!kick`, `!ban`, `!mute`, `!unmute`, `!clear [amount]`, `!slowmode [sec]`, `!autorole @role`", inline=False)
+    embed.set_footer(text="Bot by summer 2000")
+    await ctx.send(embed=embed)
 
 @bot.command()
 async def uptime(ctx):
-    uptime_seconds = int(time.time() - start_time)
-    uptime_str = str(datetime.timedelta(seconds=uptime_seconds))
-    await ctx.send(f"⏱ Bot uptime: `{uptime_str}`")
+    now = datetime.datetime.utcnow()
+    uptime_duration = now - start_time
+    hours, remainder = divmod(int(uptime_duration.total_seconds()), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    await ctx.send(f"⏱️ Bot uptime: `{hours}h {minutes}m {seconds}s`")
 
-# Moderation commands ... [unchanged below]
-# (kick, ban, mute, unmute, help_command, etc.)
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(f"⏳ This command is on cooldown. Try again in {round(error.retry_after, 1)}s.")
+        return
+    elif isinstance(error, commands.MissingPermissions):
+        await ctx.send("❌ You don't have permission to use this command.")
+        return
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("❌ You're missing a required argument.")
+        return
+    elif isinstance(error, commands.CommandNotFound):
+        return  # silently ignore unknown commands
+    else:
+        await ctx.send("⚠️ An error occurred while running the command.")
+
+    if log_channel_id:
+        log_channel = bot.get_channel(log_channel_id)
+        if log_channel:
+            embed = discord.Embed(
+                title="⚠️ Command Error",
+                description=f"**Command:** `{ctx.message.content}`\n**User:** {ctx.author} ({ctx.author.id})\n**Error:** `{type(error).__name__}: {error}`",
+                color=discord.Color.red(),
+                timestamp=datetime.datetime.utcnow()
+            )
+            embed.set_footer(text=f"Channel: {ctx.channel.name} | Server: {ctx.guild.name}")
+            await log_channel.send(embed=embed)
 
 bot.run(os.getenv("DISCORD_TOKEN"))
-
