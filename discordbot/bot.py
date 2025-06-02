@@ -8,7 +8,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-INVITE_CODE = "summer2025"
+INVITE_CODE = "CodeZDi43ASDd3XA28Xn13"
 WHITELIST_FILE = "whitelisted_guilds.json"
 
 # Load whitelist from file or create empty set
