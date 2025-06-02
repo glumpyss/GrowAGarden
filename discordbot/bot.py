@@ -3,19 +3,33 @@ from discord.ext import commands, tasks
 import aiohttp
 import asyncio
 import copy
+import datetime
+import os
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 autostock_channel = None
 autostock_enabled = False
 previous_stock = None
+last_update_time = None
+restock_log = []
+ping_role_id = None
+autorole_id = None
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
     check_stock.start()
+
+@bot.event
+async def on_member_join(member):
+    if autorole_id:
+        role = member.guild.get_role(autorole_id)
+        if role:
+            await member.add_roles(role, reason="Auto role")
 
 def format_items(items):
     if not items:
@@ -38,6 +52,7 @@ def create_stock_embed(data, author=None):
     return embed
 
 @bot.command()
+@commands.cooldown(1, 5, commands.BucketType.user)
 async def seeds(ctx):
     url = "https://growagardenapi.vercel.app/api/stock/GetStock"
     async with aiohttp.ClientSession() as session:
@@ -51,6 +66,37 @@ async def seeds(ctx):
                 await ctx.send(embed=embed)
             else:
                 await ctx.send(f"❌ Failed to fetch stock. Status code: {response.status}")
+
+@bot.command()
+@commands.cooldown(1, 5, commands.BucketType.user)
+async def stock(ctx, category: str):
+    category = category.lower()
+    valid = {
+        "seeds": "seedsStock",
+        "gear": "gearStock",
+        "eggs": "eggStock",
+        "bees": "BeeStock",
+        "cosmetics": "cosmeticsStock"
+    }
+    if category not in valid:
+        await ctx.send("❌ Invalid category. Choose from: seeds, gear, eggs, bees, cosmetics.")
+        return
+
+    url = "https://growagardenapi.vercel.app/api/stock/GetStock"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            if response.status == 200:
+                data = await response.json()
+                items = data.get(valid[category], [])
+                embed = discord.Embed(
+                    title=f"🌱 Grow A Garden - {category.capitalize()} Stock",
+                    description=format_items(items),
+                    color=discord.Color.green()
+                )
+                embed.set_footer(text=f"Requested by {ctx.author}", icon_url=ctx.author.avatar.url if ctx.author.avatar else None)
+                await ctx.send(embed=embed)
+            else:
+                await ctx.send("❌ Failed to fetch stock.")
 
 @bot.command()
 @commands.has_permissions(manage_roles=True)
@@ -68,7 +114,7 @@ async def autostock(ctx, mode: str):
 
 @tasks.loop(seconds=5)
 async def check_stock():
-    global previous_stock
+    global previous_stock, last_update_time, restock_log
     if not autostock_enabled or autostock_channel is None:
         return
 
@@ -80,16 +126,74 @@ async def check_stock():
                 new_seed_stock = data.get("seedsStock", [])
                 if previous_stock != new_seed_stock:
                     previous_stock = copy.deepcopy(new_seed_stock)
+                    last_update_time = datetime.datetime.utcnow()
+                    restock_log.append((last_update_time.strftime('%Y-%m-%d %H:%M:%S'), [item.get('name', 'Unknown') for item in new_seed_stock]))
                     embed = create_stock_embed(data)
-                    await autostock_channel.send(embed=embed)
+                    msg = ""
+                    if ping_role_id:
+                        msg = f"<@&{ping_role_id}>"
+                    await autostock_channel.send(content=msg, embed=embed)
 
-# Moderation commands
+@bot.command()
+async def lastupdate(ctx):
+    if last_update_time:
+        await ctx.send(f"🕒 Last stock update: `{last_update_time.strftime('%Y-%m-%d %H:%M:%S')} UTC`")
+    else:
+        await ctx.send("❌ No stock updates recorded yet.")
+
+@bot.command()
+async def restocklog(ctx):
+    if not restock_log:
+        await ctx.send("📭 No restocks logged yet.")
+        return
+    lines = [f"`{time}` - {', '.join(items)}" for time, items in restock_log[-5:]]
+    await ctx.send("📝 **Recent Restocks:**\n" + "\n".join(lines))
+
+@bot.command()
+@commands.has_permissions(manage_messages=True)
+async def clear(ctx, amount: int):
+    await ctx.channel.purge(limit=amount + 1)
+    await ctx.send(f"🧹 Cleared {amount} messages.", delete_after=3)
+
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def slowmode(ctx, seconds: int):
+    await ctx.channel.edit(slowmode_delay=seconds)
+    await ctx.send(f"🐢 Slowmode set to {seconds} seconds.")
+
+@bot.command()
+async def faq(ctx):
+    embed = discord.Embed(
+        title="❓ Grow A Garden FAQ",
+        description="Answers to common questions.",
+        color=discord.Color.orange()
+    )
+    embed.add_field(name="Where do I buy seeds?", value="Use the in-game shop near your garden.", inline=False)
+    embed.add_field(name="How often does stock change?", value="Every few minutes, depending on the server.", inline=False)
+    embed.set_footer(text="Bot by summer 2000")
+    await ctx.send(embed=embed)
+
+@bot.command()
+@commands.has_permissions(manage_roles=True)
+async def setpingrole(ctx, role: discord.Role):
+    global ping_role_id
+    ping_role_id = role.id
+    await ctx.send(f"🔔 Ping role set to {role.mention}.")
+
+@bot.command()
+@commands.has_permissions(manage_roles=True)
+async def autorole(ctx, role: discord.Role):
+    global autorole_id
+    autorole_id = role.id
+    await ctx.send(f"👤 Auto-role set to {role.mention} for new members.")
+
+# Kick, ban, mute, unmute
 @bot.command()
 @commands.has_permissions(kick_members=True)
 async def kick(ctx, member: discord.Member, *, reason=None):
     try:
         await member.kick(reason=reason)
-        await ctx.send(f"✅ Kicked {member} for: {reason if reason else 'No reason provided.'}")
+        await ctx.send(f"✅ Kicked {member} for: {reason or 'No reason provided.'}")
     except Exception as e:
         await ctx.send(f"❌ Could not kick {member}. Error: {e}")
 
@@ -98,35 +202,33 @@ async def kick(ctx, member: discord.Member, *, reason=None):
 async def ban(ctx, member: discord.Member, *, reason=None):
     try:
         await member.ban(reason=reason)
-        await ctx.send(f"✅ Banned {member} for: {reason if reason else 'No reason provided.'}")
+        await ctx.send(f"✅ Banned {member} for: {reason or 'No reason provided.'}")
     except Exception as e:
         await ctx.send(f"❌ Could not ban {member}. Error: {e}")
 
 @bot.command()
 @commands.has_permissions(manage_roles=True)
 async def mute(ctx, member: discord.Member, *, reason=None):
-    guild = ctx.guild
-    muted_role = discord.utils.get(guild.roles, name="Muted")
-    if muted_role is None:
+    muted_role = discord.utils.get(ctx.guild.roles, name="Muted")
+    if not muted_role:
         try:
-            muted_role = await guild.create_role(name="Muted", reason="Mute role needed for muting members.")
-            for channel in guild.channels:
+            muted_role = await ctx.guild.create_role(name="Muted")
+            for channel in ctx.guild.channels:
                 await channel.set_permissions(muted_role, speak=False, send_messages=False, add_reactions=False)
         except Exception as e:
             await ctx.send(f"❌ Failed to create 'Muted' role. Error: {e}")
             return
     try:
         await member.add_roles(muted_role, reason=reason)
-        await ctx.send(f"✅ Muted {member} for: {reason if reason else 'No reason provided.'}")
+        await ctx.send(f"✅ Muted {member} for: {reason or 'No reason provided.'}")
     except Exception as e:
         await ctx.send(f"❌ Could not mute {member}. Error: {e}")
 
 @bot.command()
 @commands.has_permissions(manage_roles=True)
 async def unmute(ctx, member: discord.Member):
-    guild = ctx.guild
-    muted_role = discord.utils.get(guild.roles, name="Muted")
-    if muted_role is None:
+    muted_role = discord.utils.get(ctx.guild.roles, name="Muted")
+    if not muted_role:
         await ctx.send("❌ No 'Muted' role found.")
         return
     try:
@@ -135,7 +237,6 @@ async def unmute(ctx, member: discord.Member):
     except Exception as e:
         await ctx.send(f"❌ Could not unmute {member}. Error: {e}")
 
-# Custom help command
 @bot.command(name="help")
 async def help_command(ctx):
     embed = discord.Embed(
@@ -143,16 +244,10 @@ async def help_command(ctx):
         description="Here are the available commands:",
         color=discord.Color.blue()
     )
-    embed.add_field(name="!seeds", value="Shows current Grow A Garden stock info.", inline=False)
-    embed.add_field(name="!autostock on/off", value="Toggle automatic stock updates in this channel. Requires Manage Roles permission.", inline=False)
-    embed.add_field(name="!kick @user [reason]", value="Kick a member. Requires Kick Members permission.", inline=False)
-    embed.add_field(name="!ban @user [reason]", value="Ban a member. Requires Ban Members permission.", inline=False)
-    embed.add_field(name="!mute @user [reason]", value="Mute a member. Requires Manage Roles permission.", inline=False)
-    embed.add_field(name="!unmute @user", value="Unmute a member. Requires Manage Roles permission.", inline=False)
-    embed.set_footer(text=f"Bot by summer 2000")
+    embed.add_field(name="Grow A Garden", value="`!seeds`, `!stock [category]`, `!autostock on/off`, `!lastupdate`, `!restocklog`, `!setpingrole @role`, `!faq`", inline=False)
+    embed.add_field(name="Moderation", value="`!kick`, `!ban`, `!mute`, `!unmute`, `!clear [amount]`, `!slowmode [sec]`, `!autorole @role`", inline=False)
+    embed.set_footer(text="Bot by summer 2000")
     await ctx.send(embed=embed)
 
-import os
 bot.run(os.getenv("DISCORD_TOKEN"))
-
 
