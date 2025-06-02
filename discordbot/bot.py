@@ -169,7 +169,7 @@ async def faq(ctx):
         color=discord.Color.orange()
     )
     embed.add_field(name="Where do I buy seeds?", value="Use the in-game shop near your garden.", inline=False)
-    embed.add_field(name="How often does stock change?", value="Every few minutes, depending on the server.", inline=False)
+    embed.add_field(name="How often does stock change?", value="Every 5 minutes", inline=False)
     embed.set_footer(text="Bot by summer 2000")
     await ctx.send(embed=embed)
 
