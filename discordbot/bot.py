@@ -3,7 +3,6 @@ from discord.ext import commands, tasks
 import aiohttp
 import asyncio
 import copy
-import os
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -79,31 +78,30 @@ async def check_stock():
             if response.status == 200:
                 data = await response.json()
                 new_seed_stock = data.get("seedsStock", [])
-
                 if previous_stock != new_seed_stock:
                     previous_stock = copy.deepcopy(new_seed_stock)
                     embed = create_stock_embed(data, None)
                     await autostock_channel.send(embed=embed)
 
-# --- Moderation Commands ---
+# Moderation commands
 
 @bot.command()
 @commands.has_permissions(kick_members=True)
 async def kick(ctx, member: discord.Member, *, reason=None):
     try:
         await member.kick(reason=reason)
-        await ctx.send(f"✅ Kicked {member.mention} for reason: {reason or 'No reason provided.'}")
+        await ctx.send(f"✅ {member} has been kicked. Reason: {reason if reason else 'No reason provided.'}")
     except Exception as e:
-        await ctx.send(f"❌ Could not kick {member.mention}. Error: {e}")
+        await ctx.send(f"❌ Could not kick {member}. Error: {e}")
 
 @bot.command()
 @commands.has_permissions(ban_members=True)
 async def ban(ctx, member: discord.Member, *, reason=None):
     try:
         await member.ban(reason=reason)
-        await ctx.send(f"✅ Banned {member.mention} for reason: {reason or 'No reason provided.'}")
+        await ctx.send(f"✅ {member} has been banned. Reason: {reason if reason else 'No reason provided.'}")
     except Exception as e:
-        await ctx.send(f"❌ Could not ban {member.mention}. Error: {e}")
+        await ctx.send(f"❌ Could not ban {member}. Error: {e}")
 
 @bot.command()
 @commands.has_permissions(manage_messages=True)
@@ -112,29 +110,48 @@ async def clear(ctx, amount: int):
         deleted = await ctx.channel.purge(limit=amount)
         await ctx.send(f"🧹 Deleted {len(deleted)} messages.", delete_after=5)
     except Exception as e:
-        await ctx.send(f"❌ Could not clear messages. Error: {e}")
+        await ctx.send(f"❌ Could not delete messages. Error: {e}")
 
 @bot.command()
 @commands.has_permissions(manage_roles=True)
 async def mute(ctx, member: discord.Member):
-    guild = ctx.guild
-    muted_role = discord.utils.get(guild.roles, name="Muted")
-    if not muted_role:
-        muted_role = await guild.create_role(name="Muted")
-        for channel in guild.channels:
-            await channel.set_permissions(muted_role, speak=False, send_messages=False, read_message_history=True, read_messages=False)
-    await member.add_roles(muted_role)
-    await ctx.send(f"🔇 {member.mention} has been muted.")
+    role = discord.utils.get(ctx.guild.roles, name="Muted")
+    if role is None:
+        # Create Muted role if it doesn't exist
+        role = await ctx.guild.create_role(name="Muted")
+        for channel in ctx.guild.channels:
+            await channel.set_permissions(role, speak=False, send_messages=False, read_message_history=True, read_messages=False)
+    await member.add_roles(role)
+    await ctx.send(f"🔇 {member} has been muted.")
 
 @bot.command()
 @commands.has_permissions(manage_roles=True)
 async def unmute(ctx, member: discord.Member):
-    muted_role = discord.utils.get(ctx.guild.roles, name="Muted")
-    if muted_role in member.roles:
-        await member.remove_roles(muted_role)
-        await ctx.send(f"🔈 {member.mention} has been unmuted.")
+    role = discord.utils.get(ctx.guild.roles, name="Muted")
+    if role:
+        await member.remove_roles(role)
+        await ctx.send(f"🔊 {member} has been unmuted.")
     else:
-        await ctx.send(f"❌ {member.mention} is not muted.")
+        await ctx.send("❌ Muted role does not exist.")
 
+# Help command
+@bot.command()
+async def help(ctx):
+    embed = discord.Embed(
+        title="Bot Commands Help",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="!seeds", value="Show current Grow A Garden stock.", inline=False)
+    embed.add_field(name="!autostock on/off", value="Toggle automatic stock updates. Requires Manage Roles permission.", inline=False)
+    embed.add_field(name="Moderation Commands:", value="(Require appropriate permissions)", inline=False)
+    embed.add_field(name="!kick @user [reason]", value="Kick a user.", inline=False)
+    embed.add_field(name="!ban @user [reason]", value="Ban a user.", inline=False)
+    embed.add_field(name="!clear <number>", value="Delete recent messages.", inline=False)
+    embed.add_field(name="!mute @user", value="Mute a user.", inline=False)
+    embed.add_field(name="!unmute @user", value="Unmute a user.", inline=False)
+    await ctx.send(embed=embed)
+
+import os
 bot.run(os.getenv("DISCORD_TOKEN"))
+
 
