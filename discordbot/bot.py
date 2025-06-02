@@ -18,8 +18,8 @@ last_update_time = None
 restock_log = []
 ping_role_id = None
 autorole_id = None
-log_channel_id = None  # For error logging
-start_time = datetime.datetime.utcnow()  # Bot start time for uptime
+log_channel = None
+start_time = datetime.datetime.utcnow()
 
 @bot.event
 async def on_ready():
@@ -57,17 +57,22 @@ def create_stock_embed(data, author=None):
 @commands.cooldown(1, 5, commands.BucketType.user)
 async def seeds(ctx):
     url = "https://growagardenapi.vercel.app/api/stock/GetStock"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            if response.status == 200:
-                data = await response.json()
-                if not data.get("success", False):
-                    await ctx.send("❌ API returned unsuccessful response.")
-                    return
-                embed = create_stock_embed(data, ctx.author)
-                await ctx.send(embed=embed)
-            else:
-                await ctx.send(f"❌ Failed to fetch stock. Status code: {response.status}")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if not data.get("success", False):
+                        await ctx.send("❌ API returned unsuccessful response.")
+                        return
+                    embed = create_stock_embed(data, ctx.author)
+                    await ctx.send(embed=embed)
+                else:
+                    await ctx.send(f"❌ Failed to fetch stock. Status code: {response.status}")
+    except Exception as e:
+        await ctx.send("❌ Error fetching stock data.")
+        if log_channel:
+            await log_channel.send(f"❗ **Stock Error:** `{e}`")
 
 @bot.command()
 @commands.cooldown(1, 5, commands.BucketType.user)
@@ -85,20 +90,25 @@ async def stock(ctx, category: str):
         return
 
     url = "https://growagardenapi.vercel.app/api/stock/GetStock"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            if response.status == 200:
-                data = await response.json()
-                items = data.get(valid[category], [])
-                embed = discord.Embed(
-                    title=f"🌱 Grow A Garden - {category.capitalize()} Stock",
-                    description=format_items(items),
-                    color=discord.Color.green()
-                )
-                embed.set_footer(text=f"Requested by {ctx.author}", icon_url=ctx.author.avatar.url if ctx.author.avatar else None)
-                await ctx.send(embed=embed)
-            else:
-                await ctx.send("❌ Failed to fetch stock.")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    items = data.get(valid[category], [])
+                    embed = discord.Embed(
+                        title=f"🌱 Grow A Garden - {category.capitalize()} Stock",
+                        description=format_items(items),
+                        color=discord.Color.green()
+                    )
+                    embed.set_footer(text=f"Requested by {ctx.author}", icon_url=ctx.author.avatar.url if ctx.author.avatar else None)
+                    await ctx.send(embed=embed)
+                else:
+                    await ctx.send("❌ Failed to fetch stock.")
+    except Exception as e:
+        await ctx.send("❌ Error fetching stock data.")
+        if log_channel:
+            await log_channel.send(f"❗ **Stock Category Error:** `{e}`")
 
 @bot.command()
 @commands.has_permissions(manage_roles=True)
@@ -121,20 +131,24 @@ async def check_stock():
         return
 
     url = "https://growagardenapi.vercel.app/api/stock/GetStock"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            if response.status == 200:
-                data = await response.json()
-                new_seed_stock = data.get("seedsStock", [])
-                if previous_stock != new_seed_stock:
-                    previous_stock = copy.deepcopy(new_seed_stock)
-                    last_update_time = datetime.datetime.utcnow()
-                    restock_log.append((last_update_time.strftime('%Y-%m-%d %H:%M:%S'), [item.get('name', 'Unknown') for item in new_seed_stock]))
-                    embed = create_stock_embed(data)
-                    msg = ""
-                    if ping_role_id:
-                        msg = f"<@&{ping_role_id}>"
-                    await autostock_channel.send(content=msg, embed=embed)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    new_seed_stock = data.get("seedsStock", [])
+                    if previous_stock != new_seed_stock:
+                        previous_stock = copy.deepcopy(new_seed_stock)
+                        last_update_time = datetime.datetime.utcnow()
+                        restock_log.append((last_update_time.strftime('%Y-%m-%d %H:%M:%S'), [item.get('name', 'Unknown') for item in new_seed_stock]))
+                        embed = create_stock_embed(data)
+                        msg = ""
+                        if ping_role_id:
+                            msg = f"<@&{ping_role_id}>"
+                        await autostock_channel.send(content=msg, embed=embed)
+    except Exception as e:
+        if log_channel:
+            await log_channel.send(f"❗ **AutoStock Error:** `{e}`")
 
 @bot.command()
 async def lastupdate(ctx):
@@ -152,16 +166,43 @@ async def restocklog(ctx):
     await ctx.send("📝 **Recent Restocks:**\n" + "\n".join(lines))
 
 @bot.command()
-@commands.has_permissions(manage_messages=True)
-async def clear(ctx, amount: int):
-    await ctx.channel.purge(limit=amount + 1)
-    await ctx.send(f"🧹 Cleared {amount} messages.", delete_after=3)
+async def uptime(ctx):
+    delta = datetime.datetime.utcnow() - start_time
+    await ctx.send(f"⏱️ Bot Uptime: `{str(delta).split('.')[0]}`")
 
 @bot.command()
-@commands.has_permissions(manage_channels=True)
-async def slowmode(ctx, seconds: int):
-    await ctx.channel.edit(slowmode_delay=seconds)
-    await ctx.send(f"🐢 Slowmode set to {seconds} seconds.")
+@commands.has_permissions(administrator=True)
+async def loggingchannel(ctx):
+    global log_channel
+    overwrites = {
+        ctx.guild.default_role: discord.PermissionOverwrite(read_messages=False),
+        ctx.guild.me: discord.PermissionOverwrite(read_messages=True)
+    }
+    log_channel = await ctx.guild.create_text_channel("bot-logs", overwrites=overwrites)
+    await ctx.send("📘 Logging channel `bot-logs` has been created and set.")
+
+@bot.command()
+async def weather(ctx):
+    url = "https://growagardenapi.vercel.app/api/GetWeather"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    weather = data.get("weather", "Unknown")
+                    embed = discord.Embed(
+                        title="🌦️ Grow A Garden - Current Weather",
+                        description=f"**{weather}**",
+                        color=discord.Color.blurple()
+                    )
+                    embed.set_footer(text=f"Requested by {ctx.author}", icon_url=ctx.author.avatar.url if ctx.author.avatar else None)
+                    await ctx.send(embed=embed)
+                else:
+                    await ctx.send("❌ Failed to fetch weather.")
+    except Exception as e:
+        await ctx.send("❌ Error fetching weather.")
+        if log_channel:
+            await log_channel.send(f"🌩️ **Weather API Error:** `{e}`")
 
 @bot.command()
 async def faq(ctx):
@@ -190,13 +231,17 @@ async def autorole(ctx, role: discord.Role):
     await ctx.send(f"👤 Auto-role set to {role.mention} for new members.")
 
 @bot.command()
-@commands.has_permissions(manage_channels=True)
-async def setlogchannel(ctx, channel: discord.TextChannel):
-    global log_channel_id
-    log_channel_id = channel.id
-    await ctx.send(f"📄 Log channel set to {channel.mention}.")
+@commands.has_permissions(manage_messages=True)
+async def clear(ctx, amount: int):
+    await ctx.channel.purge(limit=amount + 1)
+    await ctx.send(f"🧹 Cleared {amount} messages.", delete_after=3)
 
-# Kick, ban, mute, unmute
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def slowmode(ctx, seconds: int):
+    await ctx.channel.edit(slowmode_delay=seconds)
+    await ctx.send(f"🐢 Slowmode set to {seconds} seconds.")
+
 @bot.command()
 @commands.has_permissions(kick_members=True)
 async def kick(ctx, member: discord.Member, *, reason=None):
@@ -253,45 +298,10 @@ async def help_command(ctx):
         description="Here are the available commands:",
         color=discord.Color.blue()
     )
-    embed.add_field(name="Grow A Garden", value="`!seeds`, `!stock [category]`, `!autostock on/off`, `!lastupdate`, `!restocklog`, `!setpingrole @role`, `!faq`, `!uptime`, `!setlogchannel #channel`", inline=False)
+    embed.add_field(name="Grow A Garden", value="`!seeds`, `!stock [category]`, `!autostock on/off`, `!lastupdate`, `!restocklog`, `!setpingrole @role`, `!faq`, `!weather`", inline=False)
     embed.add_field(name="Moderation", value="`!kick`, `!ban`, `!mute`, `!unmute`, `!clear [amount]`, `!slowmode [sec]`, `!autorole @role`", inline=False)
+    embed.add_field(name="Utility", value="`!uptime`, `!loggingchannel`", inline=False)
     embed.set_footer(text="Bot by summer 2000")
     await ctx.send(embed=embed)
-
-@bot.command()
-async def uptime(ctx):
-    now = datetime.datetime.utcnow()
-    uptime_duration = now - start_time
-    hours, remainder = divmod(int(uptime_duration.total_seconds()), 3600)
-    minutes, seconds = divmod(remainder, 60)
-    await ctx.send(f"⏱️ Bot uptime: `{hours}h {minutes}m {seconds}s`")
-
-@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, commands.CommandOnCooldown):
-        await ctx.send(f"⏳ This command is on cooldown. Try again in {round(error.retry_after, 1)}s.")
-        return
-    elif isinstance(error, commands.MissingPermissions):
-        await ctx.send("❌ You don't have permission to use this command.")
-        return
-    elif isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send("❌ You're missing a required argument.")
-        return
-    elif isinstance(error, commands.CommandNotFound):
-        return  # silently ignore unknown commands
-    else:
-        await ctx.send("⚠️ An error occurred while running the command.")
-
-    if log_channel_id:
-        log_channel = bot.get_channel(log_channel_id)
-        if log_channel:
-            embed = discord.Embed(
-                title="⚠️ Command Error",
-                description=f"**Command:** `{ctx.message.content}`\n**User:** {ctx.author} ({ctx.author.id})\n**Error:** `{type(error).__name__}: {error}`",
-                color=discord.Color.red(),
-                timestamp=datetime.datetime.utcnow()
-            )
-            embed.set_footer(text=f"Channel: {ctx.channel.name} | Server: {ctx.guild.name}")
-            await log_channel.send(embed=embed)
 
 bot.run(os.getenv("DISCORD_TOKEN"))
