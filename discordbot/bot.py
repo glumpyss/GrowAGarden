@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 import aiohttp
 import asyncio
 import copy
+import os
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -10,7 +11,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 autostock_channel = None
 autostock_enabled = False
-previous_stock = None
+previous_stock = {}
 
 @bot.event
 async def on_ready():
@@ -77,13 +78,23 @@ async def check_stock():
         async with session.get(url) as response:
             if response.status == 200:
                 data = await response.json()
-                new_seed_stock = data.get("seedsStock", [])
+                if not data.get("success", False):
+                    return
 
-                if previous_stock != new_seed_stock:
-                    previous_stock = copy.deepcopy(new_seed_stock)
+                current_stock = {
+                    "seedsStock": data.get("seedsStock", []),
+                    "gearStock": data.get("gearStock", []),
+                    "eggStock": data.get("eggStock", []),
+                    "BeeStock": data.get("BeeStock", []),
+                    "cosmeticsStock": data.get("cosmeticsStock", []),
+                }
+
+                if current_stock != previous_stock:
+                    previous_stock = copy.deepcopy(current_stock)
                     embed = create_stock_embed(data, None)
                     await autostock_channel.send(embed=embed)
-import os
+
 bot.run(os.getenv("DISCORD_TOKEN"))
+
 
 
