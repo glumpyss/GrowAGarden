@@ -1,14 +1,47 @@
 import discord
 from discord.ext import commands
 import aiohttp
+import json
+import os
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+INVITE_CODE = "summer2025"
+WHITELIST_FILE = "whitelisted_guilds.json"
+
+# Load whitelist from file or create empty set
+if os.path.exists(WHITELIST_FILE):
+    with open(WHITELIST_FILE, "r") as f:
+        whitelisted_guilds = set(json.load(f))
+else:
+    whitelisted_guilds = set()
+
+def save_whitelist():
+    with open(WHITELIST_FILE, "w") as f:
+        json.dump(list(whitelisted_guilds), f)
+
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
+
+@bot.command()
+async def activate(ctx, code: str):
+    if code == INVITE_CODE:
+        whitelisted_guilds.add(ctx.guild.id)
+        save_whitelist()
+        await ctx.send("✅ Bot activated for this server!")
+    else:
+        await ctx.send("❌ Invalid invite code.")
+
+@bot.check
+async def globally_block_if_not_activated(ctx):
+    if ctx.guild is None:
+        return False  # block commands in DMs if you want
+    if ctx.command.name == "activate":
+        return True  # always allow activate command
+    return ctx.guild.id in whitelisted_guilds
 
 @bot.command()
 async def seeds(ctx):
@@ -41,11 +74,10 @@ async def seeds(ctx):
 
                 embed.set_footer(text=f"Requested by {ctx.author}", icon_url=ctx.author.avatar.url if ctx.author.avatar else None)
 
-                await ctx.send(embed=embed)  # Sends ONE embed
+                await ctx.send(embed=embed)
 
             else:
                 await ctx.send(f"❌ Failed to fetch stock. Status code: {response.status}")
-
 import os
 bot.run(os.getenv("DISCORD_TOKEN"))
 
