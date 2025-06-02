@@ -46,7 +46,7 @@ async def seeds(ctx):
             else:
                 await ctx.send(f"❌ Failed to fetch stock. Status code: {response.status}")
 
-bot.run("MTM3ODk5NzQzODQ3MTQ3NTIyMA.GyG7lG.qR7tdUYxvdNTLnu1i33kmvQKKoh9Ux5Qr7GWt8")
-
+import os
+bot.run(os.getenv("DISCORD_TOKEN"))
 
 
