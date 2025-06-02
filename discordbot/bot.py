@@ -78,14 +78,63 @@ async def check_stock():
         async with session.get(url) as response:
             if response.status == 200:
                 data = await response.json()
-                if not data.get("success", False):
-                    return
+                new_seed_stock = data.get("seedsStock", [])
 
-                if previous_stock != data:
-                    previous_stock = copy.deepcopy(data)
+                if previous_stock != new_seed_stock:
+                    previous_stock = copy.deepcopy(new_seed_stock)
                     embed = create_stock_embed(data, None)
                     await autostock_channel.send(embed=embed)
 
-# Run bot with token (make sure to set DISCORD_TOKEN in environment variables)
+# --- Moderation Commands ---
+
+@bot.command()
+@commands.has_permissions(kick_members=True)
+async def kick(ctx, member: discord.Member, *, reason=None):
+    try:
+        await member.kick(reason=reason)
+        await ctx.send(f"✅ Kicked {member.mention} for reason: {reason or 'No reason provided.'}")
+    except Exception as e:
+        await ctx.send(f"❌ Could not kick {member.mention}. Error: {e}")
+
+@bot.command()
+@commands.has_permissions(ban_members=True)
+async def ban(ctx, member: discord.Member, *, reason=None):
+    try:
+        await member.ban(reason=reason)
+        await ctx.send(f"✅ Banned {member.mention} for reason: {reason or 'No reason provided.'}")
+    except Exception as e:
+        await ctx.send(f"❌ Could not ban {member.mention}. Error: {e}")
+
+@bot.command()
+@commands.has_permissions(manage_messages=True)
+async def clear(ctx, amount: int):
+    try:
+        deleted = await ctx.channel.purge(limit=amount)
+        await ctx.send(f"🧹 Deleted {len(deleted)} messages.", delete_after=5)
+    except Exception as e:
+        await ctx.send(f"❌ Could not clear messages. Error: {e}")
+
+@bot.command()
+@commands.has_permissions(manage_roles=True)
+async def mute(ctx, member: discord.Member):
+    guild = ctx.guild
+    muted_role = discord.utils.get(guild.roles, name="Muted")
+    if not muted_role:
+        muted_role = await guild.create_role(name="Muted")
+        for channel in guild.channels:
+            await channel.set_permissions(muted_role, speak=False, send_messages=False, read_message_history=True, read_messages=False)
+    await member.add_roles(muted_role)
+    await ctx.send(f"🔇 {member.mention} has been muted.")
+
+@bot.command()
+@commands.has_permissions(manage_roles=True)
+async def unmute(ctx, member: discord.Member):
+    muted_role = discord.utils.get(ctx.guild.roles, name="Muted")
+    if muted_role in member.roles:
+        await member.remove_roles(muted_role)
+        await ctx.send(f"🔈 {member.mention} has been unmuted.")
+    else:
+        await ctx.send(f"❌ {member.mention} is not muted.")
+
 bot.run(os.getenv("DISCORD_TOKEN"))
 
