@@ -301,10 +301,10 @@ async def help_command(ctx):
         description="Here are the available commands:",
         color=discord.Color.blue()
     )
-    embed.add_field(name="Grow A Garden", value="`!seeds, !stock [category], !autostock on/off, !lastupdate, !restocklog, !setpingrole @role, !faq,!iteminfo, !weather", inline=False)
-    embed.add_field(name="Moderation", value="`!kick, !ban, !mute, !unmute, !clear [amount], !slowmode [sec], !autorole @role", inline=False)
-    embed.add_field(name="Utility", value="`!uptime, !loggingchannel, !ping", inline=False)
-    embed.add_field(name="Fun", value="`coming soon", inline=False)
+    embed.add_field(name="Grow A Garden", value="``!seeds``, ``!stock [category]``, ``!autostock on/off``, ``!lastupdate``, ``!restocklog``, ``!setpingrole @role``, ``!faq``,``!iteminfo``, ``!weather``", inline=False)
+    embed.add_field(name="Moderation", value="```!kick``, ``!ban``, ``!mute``, ``!unmute``, ``!clear [amount]``, ``!slowmode [sec]``, ``!autorole @role``", inline=False)
+    embed.add_field(name="Utility", value="``!uptime, ``!loggingchannel``, ``!ping``", inline=False)
+    embed.add_field(name="Fun", value="``coming soon``", inline=False)
     embed.set_footer(text="Bot by summer 2000")
     await ctx.send(embed=embed)
 
