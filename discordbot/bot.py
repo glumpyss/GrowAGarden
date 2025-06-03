@@ -169,7 +169,7 @@ async def restocklog(ctx):
 @bot.command()
 async def uptime(ctx):
     delta = datetime.datetime.utcnow() - start_time
-    await ctx.send(f"⏱️ Bot Uptime: {str(delta).split('.')[0]}")
+    await ctx.send(f"⏱️ Bot Uptime: ``{str(delta).split('.')[0]}``")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -291,7 +291,7 @@ async def unmute(ctx, member: discord.Member):
 @bot.command()
 async def ping(ctx):
     latency = round(bot.latency * 1000)
-    await ctx.send(f"🏓 Pong! {latency}ms")
+    await ctx.send(f"🏓 Pong! ``{latency}ms``")
 
 
 @bot.command(name="help")
