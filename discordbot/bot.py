@@ -41,63 +41,52 @@ def format_items(items):
     return "\n".join(f"**{item.get('name', 'Unknown')}**: {item.get('value', 0)}" for item in items)
 
 def create_stock_embed(data, author=None):
-    embed = discord.Embed(
-        title="🌱 Grow A Garden - Stock",
-        color=discord.Color.green()
-    )
-    embed.add_field(name="Seeds", value=format_items(data.get("seedsStock", [])), inline=True)
-    embed.add_field(name="Gear", value=format_items(data.get("gearStock", [])), inline=True)
-    embed.add_field(name="Eggs", value=format_items(data.get("eggStock", [])), inline=True)
-    embed.add_field(name="Bees", value=format_items(data.get("BeeStock", [])), inline=True)
-    embed.add_field(name="Cosmetics", value=format_items(data.get("cosmeticsStock", [])), inline=True)
-    embed.add_field(name="Credits", value="Bot by **summer 2000**", inline=True)
+    embed = discord.Embed(title="🌱 Grow A Garden - Full Stock", color=discord.Color.green())
+    categories = {
+        "Seeds": "seedsStock",
+        "Gear": "gearStock",
+        "Eggs": "eggStock",
+        "Bees": "BeeStock",
+        "Cosmetics": "cosmeticsStock"
+    }
+    for title, key in categories.items():
+        items = data.get(key, [])
+        if items:
+            embed.add_field(name=title, value=format_items(items), inline=False)
     if author:
         embed.set_footer(text=f"Requested by {author}", icon_url=author.avatar.url if author.avatar else None)
     return embed
 
 @bot.command()
 @commands.cooldown(1, 5, commands.BucketType.user)
-async def seeds(ctx):
+async def stock(ctx, category: str = None):
     url = "https://growagardenapi.vercel.app/api/stock/GetStock"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    if not data.get("success", False):
-                        await ctx.send("❌ API returned unsuccessful response.")
-                        return
-                    embed = create_stock_embed(data, ctx.author)
-                    await ctx.send(embed=embed)
-                else:
-                    await ctx.send(f"❌ Failed to fetch stock. Status code: {response.status}")
-    except Exception as e:
-        await ctx.send("❌ Error fetching stock data.")
-        if log_channel:
-            await log_channel.send(f"❗ **Stock Error:** {e}")
-
-@bot.command()
-@commands.cooldown(1, 5, commands.BucketType.user)
-async def stock(ctx, category: str):
-    category = category.lower()
-    valid = {
+    categories = {
         "seeds": "seedsStock",
         "gear": "gearStock",
         "eggs": "eggStock",
         "bees": "BeeStock",
         "cosmetics": "cosmeticsStock"
     }
-    if category not in valid:
-        await ctx.send("❌ Invalid category. Choose from: seeds, gear, eggs, bees, cosmetics.")
-        return
 
-    url = "https://growagardenapi.vercel.app/api/stock/GetStock"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    items = data.get(valid[category], [])
+                if response.status != 200:
+                    await ctx.send(f"❌ Failed to fetch stock. Status: {response.status}")
+                    return
+
+                data = await response.json()
+                if not data.get("success", False):
+                    await ctx.send("❌ API returned an unsuccessful response.")
+                    return
+
+                if category:
+                    category = category.lower()
+                    if category not in categories:
+                        await ctx.send("❌ Invalid category. Choose from: seeds, gear, eggs, bees, cosmetics.")
+                        return
+                    items = data.get(categories[category], [])
                     embed = discord.Embed(
                         title=f"🌱 Grow A Garden - {category.capitalize()} Stock",
                         description=format_items(items),
@@ -106,25 +95,33 @@ async def stock(ctx, category: str):
                     embed.set_footer(text=f"Requested by {ctx.author}", icon_url=ctx.author.avatar.url if ctx.author.avatar else None)
                     await ctx.send(embed=embed)
                 else:
-                    await ctx.send("❌ Failed to fetch stock.")
+                    embed = create_stock_embed(data, ctx.author)
+                    await ctx.send(embed=embed)
+
     except Exception as e:
-        await ctx.send("❌ Error fetching stock data.")
+        await ctx.send("❌ Error fetching stock.")
         if log_channel:
-            await log_channel.send(f"❗ **Stock Category Error:** {e}")
+            await log_channel.send(f"❗ **Stock Error:** {e}")
 
 @bot.command()
 @commands.has_permissions(manage_roles=True)
-async def autostock(ctx, mode: str):
+async def autostock(ctx, mode: str = None):
     global autostock_channel, autostock_enabled
-    if mode.lower() == "on":
+    if mode is None:
+        status = "enabled" if autostock_enabled else "disabled"
+        await ctx.send(f"ℹ️ Auto stock is currently **{status}**.")
+        return
+
+    mode = mode.lower()
+    if mode == "on":
         autostock_channel = ctx.channel
         autostock_enabled = True
-        await ctx.send("✅ Auto stock updates enabled.")
-    elif mode.lower() == "off":
+        await ctx.send(f"✅ Auto stock updates **enabled** in {ctx.channel.mention}.")
+    elif mode == "off":
         autostock_enabled = False
-        await ctx.send("❌ Auto stock updates disabled.")
+        await ctx.send("❌ Auto stock updates **disabled**.")
     else:
-        await ctx.send("Usage: !autostock on or !autostock off")
+        await ctx.send("Usage: `!autostock on`, `!autostock off`, or `!autostock` to check status.")
 
 @tasks.loop(seconds=5)
 async def check_stock():
@@ -144,9 +141,7 @@ async def check_stock():
                         last_update_time = datetime.datetime.utcnow()
                         restock_log.append((last_update_time.strftime('%Y-%m-%d %H:%M:%S'), [item.get('name', 'Unknown') for item in new_seed_stock]))
                         embed = create_stock_embed(data)
-                        msg = ""
-                        if ping_role_id:
-                            msg = f"<@&{ping_role_id}>"
+                        msg = f"<@&{ping_role_id}>" if ping_role_id else ""
                         await autostock_channel.send(content=msg, embed=embed)
     except Exception as e:
         if log_channel:
@@ -287,13 +282,10 @@ async def unmute(ctx, member: discord.Member):
     else:
         await ctx.send(f"❌ {member} is not muted.")
 
-# ------- new commands
-
 @bot.command()
 async def ping(ctx):
     latency = round(bot.latency * 1000)
     await ctx.send(f"🏓 Pong! ``{latency}ms``")
-
 
 @bot.command(name="help")
 async def help_command(ctx):
@@ -305,85 +297,9 @@ async def help_command(ctx):
     embed.add_field(name="Grow A Garden", value="``!seeds``, ``!stock [category]``, ``!autostock on/off``, ``!lastupdate``, ``!restocklog``, ``!setpingrole @role``, ``!faq``,``!iteminfo``, ``!weather``", inline=False)
     embed.add_field(name="Moderation", value="``!kick``, ``!ban``, ``!mute``, ``!unmute``, ``!clear [amount]``, ``!slowmode [sec]``, ``!autorole @role``", inline=False)
     embed.add_field(name="Utility", value="``!uptime``, ``!loggingchannel``, ``!ping``", inline=False)
-    embed.add_field(name="Fun", value="``!connect4 @user``, ``!8ball [question]`` , ``!flip`` , ``!tictactoe @user``", inline=False)
+    embed.add_field(name="Fun", value="``!connect4 @user``, ``!8ball [question]``, ``!flip``, ``!tictactoe @user``", inline=False)
     embed.set_footer(text="Bot by summer 2000")
     await ctx.send(embed=embed)
-
-# ------------------------------------------------
-# Connect 4
-
-@bot.command()
-async def connect4(ctx, opponent: discord.Member):
-    rows, cols = 6, 7
-    board = [["⚪" for _ in range(cols)] for _ in range(rows)]
-
-    def render_board():
-        return "\n".join("".join(row) for row in board) + "\n1️⃣2️⃣3️⃣4️⃣5️⃣6️⃣7️⃣"
-
-    def drop_piece(col, piece):
-        for row in reversed(board):
-            if row[col] == "⚪":
-                row[col] = piece
-                return True
-        return False
-
-    def check_win(p):
-        for r in range(rows):
-            for c in range(cols - 3):
-                if all(board[r][c+i] == p for i in range(4)):
-                    return True
-        for r in range(rows - 3):
-            for c in range(cols):
-                if all(board[r+i][c] == p for i in range(4)):
-                    return True
-        for r in range(rows - 3):
-            for c in range(cols - 3):
-                if all(board[r+i][c+i] == p for i in range(4)):
-                    return True
-        for r in range(3, rows):
-            for c in range(cols - 3):
-                if all(board[r-i][c+i] == p for i in range(4)):
-                    return True
-        return False
-
-    players = [ctx.author, opponent]
-    pieces = ["🔴", "🟡"]
-    turn = 0
-
-    await ctx.send(f"🎮 Connect 4 between {players[0].mention} and {players[1].mention}!\n{render_board()}")
-
-    while True:
-        await ctx.send(f"{players[turn].mention}, choose a column (1-7):")
-
-        def check(m):
-            return m.author == players[turn] and m.content.isdigit() and 1 <= int(m.content) <= 7
-
-        try:
-            msg = await bot.wait_for("message", timeout=60, check=check)
-        except asyncio.TimeoutError:
-            await ctx.send("⏰ Game timed out.")
-            return
-
-        col = int(msg.content) - 1
-        if not drop_piece(col, pieces[turn]):
-            await ctx.send("❌ Column is full! Try another.")
-            continue
-
-        await ctx.send(render_board())
-
-        if check_win(pieces[turn]):
-            await ctx.send(f"🏆 {players[turn].mention} wins!")
-            return
-
-        if all(board[0][c] != "⚪" for c in range(cols)):
-            await ctx.send("🤝 It's a draw!")
-            return
-
-        turn = 1 - turn
-
-
-# ------------------------------------------------
-# Magic 8-ball
 
 @bot.command()
 async def eightball(ctx, *, question: str):
@@ -394,60 +310,8 @@ async def eightball(ctx, *, question: str):
     ]
     await ctx.send(f"🎱 Question: *{question}*\nAnswer: {random.choice(responses)}")
 
-#-------------------------------------------------
-# Coin flip
 @bot.command()
 async def coinflip(ctx):
     await ctx.send(f"🪙 You flipped: **{random.choice(['Heads', 'Tails'])}**")
 
-#-------------------------------------------------
-# Tic Tac Toe
-
-@bot.command()
-async def ttt(ctx, opponent: discord.Member):
-    board = [":white_large_square:" for _ in range(9)]
-    players = [ctx.author, opponent]
-    symbols = [":x:", ":o:"]
-    turn = 0
-
-    def render():
-        return "".join(f"{board[i]}{'\\n' if (i+1)%3 == 0 else ''}" for i in range(9))
-
-    def check_win(s):
-        combos = [(0,1,2),(3,4,5),(6,7,8),(0,3,6),(1,4,7),(2,5,8),(0,4,8),(2,4,6)]
-        return any(all(board[i] == s for i in combo) for combo in combos)
-
-    await ctx.send(f"🎮 Tic Tac Toe: {players[0].mention} vs {players[1].mention}\n{render()}")
-
-    while True:
-        await ctx.send(f"{players[turn].mention}'s turn! Choose position (1-9):")
-
-        def check(m):
-            return m.author == players[turn] and m.content.isdigit() and 1 <= int(m.content) <= 9
-
-        try:
-            msg = await bot.wait_for("message", timeout=60, check=check)
-        except asyncio.TimeoutError:
-            await ctx.send("⏰ Game timed out.")
-            return
-
-        pos = int(msg.content) - 1
-        if board[pos] != ":white_large_square:":
-            await ctx.send("❌ That spot is already taken!")
-            continue
-
-        board[pos] = symbols[turn]
-        await ctx.send(render())
-
-        if check_win(symbols[turn]):
-            await ctx.send(f"🏆 {players[turn].mention} wins!")
-            return
-        if ":white_large_square:" not in board:
-            await ctx.send("🤝 It's a draw!")
-            return
-
-        turn = 1 - turn
-
-#-------------------------------------------------
-
-bot.run(os.getenv("DISCORD_TOKEN"))  
+bot.run(os.getenv("DISCORD_TOKEN"))
