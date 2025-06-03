@@ -73,7 +73,7 @@ async def seeds(ctx):
     except Exception as e:
         await ctx.send("❌ Error fetching stock data.")
         if log_channel:
-            await log_channel.send(f"❗ **Stock Error:** `{e}`")
+            await log_channel.send(f"❗ **Stock Error:** {e}")
 
 @bot.command()
 @commands.cooldown(1, 5, commands.BucketType.user)
@@ -109,7 +109,7 @@ async def stock(ctx, category: str):
     except Exception as e:
         await ctx.send("❌ Error fetching stock data.")
         if log_channel:
-            await log_channel.send(f"❗ **Stock Category Error:** `{e}`")
+            await log_channel.send(f"❗ **Stock Category Error:** {e}")
 
 @bot.command()
 @commands.has_permissions(manage_roles=True)
@@ -123,7 +123,7 @@ async def autostock(ctx, mode: str):
         autostock_enabled = False
         await ctx.send("❌ Auto stock updates disabled.")
     else:
-        await ctx.send("Usage: `!autostock on` or `!autostock off`")
+        await ctx.send("Usage: !autostock on or !autostock off")
 
 @tasks.loop(seconds=5)
 async def check_stock():
@@ -149,12 +149,12 @@ async def check_stock():
                         await autostock_channel.send(content=msg, embed=embed)
     except Exception as e:
         if log_channel:
-            await log_channel.send(f"❗ **AutoStock Error:** `{e}`")
+            await log_channel.send(f"❗ **AutoStock Error:** {e}")
 
 @bot.command()
 async def lastupdate(ctx):
     if last_update_time:
-        await ctx.send(f"🕒 Last stock update: `{last_update_time.strftime('%Y-%m-%d %H:%M:%S')} UTC`")
+        await ctx.send(f"🕒 Last stock update: {last_update_time.strftime('%Y-%m-%d %H:%M:%S')} UTC")
     else:
         await ctx.send("❌ No stock updates recorded yet.")
 
@@ -163,13 +163,13 @@ async def restocklog(ctx):
     if not restock_log:
         await ctx.send("📭 No restocks logged yet.")
         return
-    lines = [f"`{time}` - {', '.join(items)}" for time, items in restock_log[-5:]]
+    lines = [f"{time} - {', '.join(items)}" for time, items in restock_log[-5:]]
     await ctx.send("📝 **Recent Restocks:**\n" + "\n".join(lines))
 
 @bot.command()
 async def uptime(ctx):
     delta = datetime.datetime.utcnow() - start_time
-    await ctx.send(f"⏱️ Bot Uptime: `{str(delta).split('.')[0]}`")
+    await ctx.send(f"⏱️ Bot Uptime: {str(delta).split('.')[0]}")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -180,7 +180,7 @@ async def loggingchannel(ctx):
         ctx.guild.me: discord.PermissionOverwrite(read_messages=True)
     }
     log_channel = await ctx.guild.create_text_channel("bot-logs", overwrites=overwrites)
-    await ctx.send("📘 Logging channel `bot-logs` has been created and set.")
+    await ctx.send("📘 Logging channel bot-logs has been created and set.")
 
 @bot.command()
 async def weather(ctx):
@@ -203,7 +203,7 @@ async def weather(ctx):
     except Exception as e:
         await ctx.send("❌ Error fetching weather.")
         if log_channel:
-            await log_channel.send(f"🌩️ **Weather API Error:** `{e}`")
+            await log_channel.send(f"🌩️ **Weather API Error:** {e}")
 
 @bot.command()
 async def faq(ctx):
@@ -287,6 +287,32 @@ async def unmute(ctx, member: discord.Member):
         await ctx.send(f"❌ {member} is not muted.")
 
 # ------- new commands
+
+@bot.command()
+async def ping(ctx):
+    latency = round(bot.latency * 1000)
+    await ctx.send(f"🏓 Pong! {latency}ms")
+
+
+@bot.command(name="help")
+async def help_command(ctx):
+    embed = discord.Embed(
+        title="Help Menu",
+        description="Here are the available commands:",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="Grow A Garden", value="`!seeds, !stock [category], !autostock on/off, !lastupdate, !restocklog, !setpingrole @role, !faq,!iteminfo, !weather", inline=False)
+    embed.add_field(name="Moderation", value="`!kick, !ban, !mute, !unmute, !clear [amount], !slowmode [sec], !autorole @role", inline=False)
+    embed.add_field(name="Utility", value="`!uptime, !loggingchannel, !ping", inline=False)
+    embed.add_field(name="Fun", value="`coming soon", inline=False)
+    embed.set_footer(text="Bot by summer 2000")
+    await ctx.send(embed=embed)
+
+# --- item info command
+from discord.ui import View, Button, Select
+from discord import Interaction
+import math
+
 @bot.command()
 async def iteminfo(ctx):
     async with aiohttp.ClientSession() as session:
@@ -304,11 +330,12 @@ async def iteminfo(ctx):
         def __init__(self, data, ctx):
             super().__init__(timeout=60)
             self.original_ctx = ctx
+            self.ctx = ctx
             self.data = data
             self.filtered_data = data
             self.page = 0
             self.items_per_page = 9
-            self.max_page = max(1, (len(self.filtered_data) + self.items_per_page - 1) // self.items_per_page)
+            self.max_page = math.ceil(len(self.filtered_data) / self.items_per_page)
 
             self.filter_select = Select(
                 placeholder="Filter by Category",
@@ -333,30 +360,29 @@ async def iteminfo(ctx):
             self.add_item(self.next_button)
 
         async def interaction_check(self, interaction: Interaction) -> bool:
-            # Only allow the user who invoked the command to interact
             return interaction.user == self.original_ctx.author
 
-        def get_embed(self):
-            embed = discord.Embed(
-                title="📦 Item Info",
-                color=discord.Color.teal()
-            )
-            start = self.page * self.items_per_page
-            end = start + self.items_per_page
-            for item in self.filtered_data[start:end]:
-                name = item.get("name", "Unknown")
-                item_type = item.get("type", "Unknown")
-                buy_price = item.get("buyPrice") or item.get("buyprice") or "N/A"
-                sell_value = item.get("sellValue") or item.get("sellvalue") or "N/A"
-                embed.add_field(
-                    name=f"**{name}**",
-                    value=f"Type: `{item_type}`\nBuy: `{buy_price}`\nSell: `{sell_value}`",
-                    inline=True
-                )
-            embed.set_footer(text=f"Page {self.page + 1}/{self.max_page}")
-            return embed
+       def get_embed(self):
+    embed = discord.Embed(
+        title="📦 Item Info",
+        color=discord.Color.teal()
+    )
+    start = self.page * self.items_per_page
+    end = start + self.items_per_page
+    for item in self.filtered_data[start:end]:
+        name = item.get("name", "Unknown")
+        item_type = item.get("type", "Unknown")
+        buy_price = item.get("buyPrice") or item.get("buyprice") or "N/A"
+        sell_value = item.get("sellValue") or item.get("sellvalue") or "N/A"
+        embed.add_field(
+            name=f"**{name}**",
+            value=f"Type: {item_type}\nBuy: {buy_price}\nSell: {sell_value}",
+            inline=True
+        )
+    embed.set_footer(text=f"Page {self.page + 1}/{self.max_page}")
+    return embed
 
-        async def update_message(self, interaction: Interaction):
+        async def update_message(self, interaction):
             embed = self.get_embed()
             await interaction.response.edit_message(embed=embed, view=self)
 
@@ -377,12 +403,13 @@ async def iteminfo(ctx):
             else:
                 self.filtered_data = [item for item in self.data if item.get("type", "").lower() == value]
             self.page = 0
-            self.max_page = max(1, (len(self.filtered_data) + self.items_per_page - 1) // self.items_per_page)
+            self.max_page = max(1, math.ceil(len(self.filtered_data) / self.items_per_page))
             await self.update_message(interaction)
 
     view = ItemInfoView(data, ctx)
     embed = view.get_embed()
     await ctx.send(embed=embed, view=view)
+
 
 
 
