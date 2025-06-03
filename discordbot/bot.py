@@ -310,28 +310,71 @@ async def help_command(ctx):
 
 # --- item info command
 
+from discord.ui import View, Button
+
 @bot.command()
 async def iteminfo(ctx):
     url = "https://growagardenapi.vercel.app/api/Item-Info"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
-                print(f"API response status: {response.status}")  # Debug
-                if response.status == 200:
-                    data = await response.json()
-                    print(f"API data received: {data}")  # Debug
-                    items = data.get("items") or data.get("Item-Info") or data
-                    if not items:
-                        await ctx.send("❌ No items found in API response.")
-                        return
-                    # Proceed with processing items or show some data here for testing
-                    await ctx.send(f"✅ Fetched {len(items)} items.")
-                else:
-                    await ctx.send(f"❌ Failed to fetch item info. Status code: {response.status}")
-    except Exception as e:
-        print(f"Exception caught in iteminfo: {e}")  # Print error details to console
-        await ctx.send(f"❌ Error fetching item info: `{e}`")
+                if response.status != 200:
+                    return await ctx.send(f"❌ Failed to fetch item info. Status: {response.status}")
+                data = await response.json()
 
+        if not data or not isinstance(data, list):
+            return await ctx.send("❌ No items found.")
+
+        class ItemView(View):
+            def __init__(self, items):
+                super().__init__(timeout=60)
+                self.items = items
+                self.index = 0
+
+                self.prev_button = Button(label="⬅️", style=discord.ButtonStyle.primary)
+                self.next_button = Button(label="➡️", style=discord.ButtonStyle.primary)
+
+                self.prev_button.callback = self.go_previous
+                self.next_button.callback = self.go_next
+
+                self.add_item(self.prev_button)
+                self.add_item(self.next_button)
+
+            async def update_embed(self, interaction):
+                item = self.items[self.index]
+                embed = discord.Embed(
+                    title=f"{item.get('name', 'Unknown')}",
+                    description=item.get('description', 'No description'),
+                    color=discord.Color.green()
+                )
+                embed.add_field(name="Rarity", value=item.get('rarity', 'Unknown'))
+                embed.add_field(name="Value", value=item.get('value', 'Unknown'))
+                embed.set_footer(text=f"Item {self.index + 1} of {len(self.items)}")
+                await interaction.response.edit_message(embed=embed, view=self)
+
+            async def go_previous(self, interaction):
+                self.index = (self.index - 1) % len(self.items)
+                await self.update_embed(interaction)
+
+            async def go_next(self, interaction):
+                self.index = (self.index + 1) % len(self.items)
+                await self.update_embed(interaction)
+
+        view = ItemView(data)
+        first_item = data[0]
+        embed = discord.Embed(
+            title=f"{first_item.get('name', 'Unknown')}",
+            description=first_item.get('description', 'No description'),
+            color=discord.Color.green()
+        )
+        embed.add_field(name="Rarity", value=first_item.get('rarity', 'Unknown'))
+        embed.add_field(name="Value", value=first_item.get('value', 'Unknown'))
+        embed.set_footer(text=f"Item 1 of {len(data)}")
+
+        await ctx.send(embed=embed, view=view)
+
+    except Exception as e:
+        await ctx.send(f"❌ Error fetching item info: `{e}`")
 
 
 # ------------------------------------------------
