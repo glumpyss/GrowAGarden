@@ -5,6 +5,7 @@ import asyncio
 import copy
 import datetime
 import os
+import random
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -304,12 +305,149 @@ async def help_command(ctx):
     embed.add_field(name="Grow A Garden", value="``!seeds``, ``!stock [category]``, ``!autostock on/off``, ``!lastupdate``, ``!restocklog``, ``!setpingrole @role``, ``!faq``,``!iteminfo``, ``!weather``", inline=False)
     embed.add_field(name="Moderation", value="``!kick``, ``!ban``, ``!mute``, ``!unmute``, ``!clear [amount]``, ``!slowmode [sec]``, ``!autorole @role``", inline=False)
     embed.add_field(name="Utility", value="``!uptime``, ``!loggingchannel``, ``!ping``", inline=False)
-    embed.add_field(name="Fun", value="``coming soon``", inline=False)
+    embed.add_field(name="Fun", value="``!connect4 @user``, ``!8ball [question]`` , ``!flip`` , ``!tictactoe @user``", inline=False)
     embed.set_footer(text="Bot by summer 2000")
     await ctx.send(embed=embed)
 
+# ------------------------------------------------
+# Connect 4
+
+@bot.command()
+async def connect4(ctx, opponent: discord.Member):
+    rows, cols = 6, 7
+    board = [["⚪" for _ in range(cols)] for _ in range(rows)]
+
+    def render_board():
+        return "\n".join("".join(row) for row in board) + "\n1️⃣2️⃣3️⃣4️⃣5️⃣6️⃣7️⃣"
+
+    def drop_piece(col, piece):
+        for row in reversed(board):
+            if row[col] == "⚪":
+                row[col] = piece
+                return True
+        return False
+
+    def check_win(p):
+        for r in range(rows):
+            for c in range(cols - 3):
+                if all(board[r][c+i] == p for i in range(4)):
+                    return True
+        for r in range(rows - 3):
+            for c in range(cols):
+                if all(board[r+i][c] == p for i in range(4)):
+                    return True
+        for r in range(rows - 3):
+            for c in range(cols - 3):
+                if all(board[r+i][c+i] == p for i in range(4)):
+                    return True
+        for r in range(3, rows):
+            for c in range(cols - 3):
+                if all(board[r-i][c+i] == p for i in range(4)):
+                    return True
+        return False
+
+    players = [ctx.author, opponent]
+    pieces = ["🔴", "🟡"]
+    turn = 0
+
+    await ctx.send(f"🎮 Connect 4 between {players[0].mention} and {players[1].mention}!\n{render_board()}")
+
+    while True:
+        await ctx.send(f"{players[turn].mention}, choose a column (1-7):")
+
+        def check(m):
+            return m.author == players[turn] and m.content.isdigit() and 1 <= int(m.content) <= 7
+
+        try:
+            msg = await bot.wait_for("message", timeout=60, check=check)
+        except asyncio.TimeoutError:
+            await ctx.send("⏰ Game timed out.")
+            return
+
+        col = int(msg.content) - 1
+        if not drop_piece(col, pieces[turn]):
+            await ctx.send("❌ Column is full! Try another.")
+            continue
+
+        await ctx.send(render_board())
+
+        if check_win(pieces[turn]):
+            await ctx.send(f"🏆 {players[turn].mention} wins!")
+            return
+
+        if all(board[0][c] != "⚪" for c in range(cols)):
+            await ctx.send("🤝 It's a draw!")
+            return
+
+        turn = 1 - turn
 
 
 # ------------------------------------------------
+# Magic 8-ball
+
+@bot.command()
+async def eightball(ctx, *, question: str):
+    responses = [
+        "It is certain.", "Without a doubt.", "Yes – definitely.",
+        "Reply hazy, try again.", "Ask again later.",
+        "Don’t count on it.", "My reply is no.", "Very doubtful."
+    ]
+    await ctx.send(f"🎱 Question: *{question}*\nAnswer: {random.choice(responses)}")
+
+#-------------------------------------------------
+# Coin flip
+@bot.command()
+async def coinflip(ctx):
+    await ctx.send(f"🪙 You flipped: **{random.choice(['Heads', 'Tails'])}**")
+
+#-------------------------------------------------
+# Tic Tac Toe
+
+@bot.command()
+async def ttt(ctx, opponent: discord.Member):
+    board = [":white_large_square:" for _ in range(9)]
+    players = [ctx.author, opponent]
+    symbols = [":x:", ":o:"]
+    turn = 0
+
+    def render():
+        return "".join(f"{board[i]}{'\\n' if (i+1)%3 == 0 else ''}" for i in range(9))
+
+    def check_win(s):
+        combos = [(0,1,2),(3,4,5),(6,7,8),(0,3,6),(1,4,7),(2,5,8),(0,4,8),(2,4,6)]
+        return any(all(board[i] == s for i in combo) for combo in combos)
+
+    await ctx.send(f"🎮 Tic Tac Toe: {players[0].mention} vs {players[1].mention}\n{render()}")
+
+    while True:
+        await ctx.send(f"{players[turn].mention}'s turn! Choose position (1-9):")
+
+        def check(m):
+            return m.author == players[turn] and m.content.isdigit() and 1 <= int(m.content) <= 9
+
+        try:
+            msg = await bot.wait_for("message", timeout=60, check=check)
+        except asyncio.TimeoutError:
+            await ctx.send("⏰ Game timed out.")
+            return
+
+        pos = int(msg.content) - 1
+        if board[pos] != ":white_large_square:":
+            await ctx.send("❌ That spot is already taken!")
+            continue
+
+        board[pos] = symbols[turn]
+        await ctx.send(render())
+
+        if check_win(symbols[turn]):
+            await ctx.send(f"🏆 {players[turn].mention} wins!")
+            return
+        if ":white_large_square:" not in board:
+            await ctx.send("🤝 It's a draw!")
+            return
+
+        turn = 1 - turn
+
+#-------------------------------------------------
 
 bot.run(os.getenv("DISCORD_TOKEN"))  
