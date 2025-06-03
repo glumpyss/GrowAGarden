@@ -319,18 +319,19 @@ async def iteminfo(ctx):
                 print(f"API response status: {response.status}")  # Debug
                 if response.status == 200:
                     data = await response.json()
-                    print(f"API data keys: {list(data.keys())}")  # Debug
-                    items = data.get("items", [])
-                    print(f"Number of items fetched: {len(items)}")  # Debug
+                    print(f"API data received: {data}")  # Debug
+                    items = data.get("items") or data.get("Item-Info") or data
                     if not items:
                         await ctx.send("❌ No items found in API response.")
                         return
-                    # rest of your code...
+                    # Proceed with processing items or show some data here for testing
+                    await ctx.send(f"✅ Fetched {len(items)} items.")
                 else:
                     await ctx.send(f"❌ Failed to fetch item info. Status code: {response.status}")
     except Exception as e:
-        print(f"Exception caught: {e}")  # Debug
-        await ctx.send("❌ Error fetching item info.")
+        print(f"Exception caught in iteminfo: {e}")  # Print error details to console
+        await ctx.send(f"❌ Error fetching item info: `{e}`")
+
 
 
 # ------------------------------------------------
