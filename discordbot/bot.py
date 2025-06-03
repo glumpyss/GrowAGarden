@@ -287,32 +287,6 @@ async def unmute(ctx, member: discord.Member):
         await ctx.send(f"❌ {member} is not muted.")
 
 # ------- new commands
-
-@bot.command()
-async def ping(ctx):
-    latency = round(bot.latency * 1000)
-    await ctx.send(f"🏓 Pong! `{latency}ms`")
-
-
-@bot.command(name="help")
-async def help_command(ctx):
-    embed = discord.Embed(
-        title="Help Menu",
-        description="Here are the available commands:",
-        color=discord.Color.blue()
-    )
-    embed.add_field(name="Grow A Garden", value="``!seeds``, ``!stock [category]``, ``!autostock on/off``, ``!lastupdate``, ``!restocklog``, ``!setpingrole @role``, ``!faq``,``!iteminfo``, ``!weather``", inline=False)
-    embed.add_field(name="Moderation", value="``!kick``, ``!ban``, ``!mute``, ``!unmute``, ``!clear [amount]``, ``!slowmode [sec]``, ``!autorole @role``", inline=False)
-    embed.add_field(name="Utility", value="``!uptime``, ``!loggingchannel``, ``!ping``", inline=False)
-    embed.add_field(name="Fun", value="``coming soon``", inline=False)
-    embed.set_footer(text="Bot by summer 2000")
-    await ctx.send(embed=embed)
-
-# --- item info command
-from discord.ui import View, Button, Select
-from discord import Interaction
-import math
-
 @bot.command()
 async def iteminfo(ctx):
     async with aiohttp.ClientSession() as session:
@@ -326,18 +300,17 @@ async def iteminfo(ctx):
             await ctx.send(f"❌ Error fetching item info: {e}")
             return
 
-    class ItemInfoView(View):
+    class ItemInfoView(discord.ui.View):
         def __init__(self, data, ctx):
             super().__init__(timeout=60)
             self.original_ctx = ctx
-            self.ctx = ctx
             self.data = data
             self.filtered_data = data
             self.page = 0
             self.items_per_page = 9
-            self.max_page = math.ceil(len(self.filtered_data) / self.items_per_page)
+            self.max_page = max(1, math.ceil(len(self.filtered_data) / self.items_per_page))
 
-            self.filter_select = Select(
+            self.filter_select = discord.ui.Select(
                 placeholder="Filter by Category",
                 options=[
                     discord.SelectOption(label="All", value="all"),
@@ -351,52 +324,52 @@ async def iteminfo(ctx):
             self.filter_select.callback = self.filter_items
             self.add_item(self.filter_select)
 
-            self.prev_button = Button(label="⬅️ Prev", style=discord.ButtonStyle.secondary)
+            self.prev_button = discord.ui.Button(label="⬅️ Prev", style=discord.ButtonStyle.secondary)
             self.prev_button.callback = self.prev_page
             self.add_item(self.prev_button)
 
-            self.next_button = Button(label="Next ➡️", style=discord.ButtonStyle.secondary)
+            self.next_button = discord.ui.Button(label="Next ➡️", style=discord.ButtonStyle.secondary)
             self.next_button.callback = self.next_page
             self.add_item(self.next_button)
 
-        async def interaction_check(self, interaction: Interaction) -> bool:
+        async def interaction_check(self, interaction: discord.Interaction) -> bool:
             return interaction.user == self.original_ctx.author
 
-       def get_embed(self):
-    embed = discord.Embed(
-        title="📦 Item Info",
-        color=discord.Color.teal()
-    )
-    start = self.page * self.items_per_page
-    end = start + self.items_per_page
-    for item in self.filtered_data[start:end]:
-        name = item.get("name", "Unknown")
-        item_type = item.get("type", "Unknown")
-        buy_price = item.get("buyPrice") or item.get("buyprice") or "N/A"
-        sell_value = item.get("sellValue") or item.get("sellvalue") or "N/A"
-        embed.add_field(
-            name=f"**{name}**",
-            value=f"Type: `{item_type}`\nBuy: `{buy_price}`\nSell: `{sell_value}`",
-            inline=True
-        )
-    embed.set_footer(text=f"Page {self.page + 1}/{self.max_page}")
-    return embed
+        def get_embed(self):
+            embed = discord.Embed(
+                title="📦 Item Info",
+                color=discord.Color.teal()
+            )
+            start = self.page * self.items_per_page
+            end = start + self.items_per_page
+            for item in self.filtered_data[start:end]:
+                name = item.get("name", "Unknown")
+                item_type = item.get("type", "Unknown")
+                buy_price = item.get("buyPrice") or item.get("buyprice") or "N/A"
+                sell_value = item.get("sellValue") or item.get("sellvalue") or "N/A"
+                embed.add_field(
+                    name=f"**{name}**",
+                    value=f"Type: `{item_type}`\nBuy: `{buy_price}`\nSell: `{sell_value}`",
+                    inline=True
+                )
+            embed.set_footer(text=f"Page {self.page + 1}/{self.max_page}")
+            return embed
 
-        async def update_message(self, interaction):
+        async def update_message(self, interaction: discord.Interaction):
             embed = self.get_embed()
             await interaction.response.edit_message(embed=embed, view=self)
 
-        async def next_page(self, interaction: Interaction):
+        async def next_page(self, interaction: discord.Interaction):
             if self.page < self.max_page - 1:
                 self.page += 1
                 await self.update_message(interaction)
 
-        async def prev_page(self, interaction: Interaction):
+        async def prev_page(self, interaction: discord.Interaction):
             if self.page > 0:
                 self.page -= 1
                 await self.update_message(interaction)
 
-        async def filter_items(self, interaction: Interaction):
+        async def filter_items(self, interaction: discord.Interaction):
             value = self.filter_select.values[0]
             if value == "all":
                 self.filtered_data = self.data
@@ -409,8 +382,6 @@ async def iteminfo(ctx):
     view = ItemInfoView(data, ctx)
     embed = view.get_embed()
     await ctx.send(embed=embed, view=view)
-
-
 
 
 # ------------------------------------------------
