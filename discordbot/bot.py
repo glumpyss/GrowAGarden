@@ -383,10 +383,13 @@ async def iteminfo(ctx):
                 name = item.get("name", "Unknown")
                 rarity = item.get("rarity", "Unknown")
                 desc = item.get("description", "No description.")
-                image = item.get("image", None)
-                embed.add_field(name=f"{name} ({rarity})", value=desc, inline=False)
-            if page_items and page_items[0].get("image"):
-                embed.set_image(url=page_items[0]["image"])
+                buy = item.get("buyPrice", "N/A")
+                sell = item.get("sellValue", "N/A")
+                embed.add_field(
+                    name=f"{name} ({rarity})",
+                    value=f"{desc}\n💰 Buy: {buy} | Sell: {sell}",
+                    inline=False
+                )
             return embed
 
     view = ItemView()
