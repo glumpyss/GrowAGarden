@@ -307,8 +307,8 @@ async def help_command(ctx):
 @bot.command()
 async def rblxusername(ctx, username: str):
     async with aiohttp.ClientSession() as session:
-        # Get user info
-        async with session.get(f"https://users.roblox.com/v1/usernames/users", json={"usernames": [username]}) as resp:
+        # Get user info (POST request with JSON payload)
+        async with session.post("https://users.roblox.com/v1/usernames/users", json={"usernames": [username]}) as resp:
             if resp.status != 200:
                 return await ctx.send("❌ Failed to fetch user info.")
             user_data = await resp.json()
