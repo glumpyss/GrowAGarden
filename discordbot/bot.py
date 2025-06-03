@@ -300,7 +300,7 @@ async def iteminfo(ctx):
             await ctx.send(f"❌ Error fetching item info: {e}")
             return
 
-    class ItemInfoView(discord.ui.View):
+    class ItemInfoView(View):
         def __init__(self, data, ctx):
             super().__init__(timeout=60)
             self.original_ctx = ctx
@@ -308,9 +308,9 @@ async def iteminfo(ctx):
             self.filtered_data = data
             self.page = 0
             self.items_per_page = 9
-            self.max_page = max(1, math.ceil(len(self.filtered_data) / self.items_per_page))
+            self.max_page = max(1, (len(self.filtered_data) + self.items_per_page - 1) // self.items_per_page)
 
-            self.filter_select = discord.ui.Select(
+            self.filter_select = Select(
                 placeholder="Filter by Category",
                 options=[
                     discord.SelectOption(label="All", value="all"),
@@ -324,15 +324,16 @@ async def iteminfo(ctx):
             self.filter_select.callback = self.filter_items
             self.add_item(self.filter_select)
 
-            self.prev_button = discord.ui.Button(label="⬅️ Prev", style=discord.ButtonStyle.secondary)
+            self.prev_button = Button(label="⬅️ Prev", style=discord.ButtonStyle.secondary)
             self.prev_button.callback = self.prev_page
             self.add_item(self.prev_button)
 
-            self.next_button = discord.ui.Button(label="Next ➡️", style=discord.ButtonStyle.secondary)
+            self.next_button = Button(label="Next ➡️", style=discord.ButtonStyle.secondary)
             self.next_button.callback = self.next_page
             self.add_item(self.next_button)
 
-        async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        async def interaction_check(self, interaction: Interaction) -> bool:
+            # Only allow the user who invoked the command to interact
             return interaction.user == self.original_ctx.author
 
         def get_embed(self):
@@ -355,33 +356,34 @@ async def iteminfo(ctx):
             embed.set_footer(text=f"Page {self.page + 1}/{self.max_page}")
             return embed
 
-        async def update_message(self, interaction: discord.Interaction):
+        async def update_message(self, interaction: Interaction):
             embed = self.get_embed()
             await interaction.response.edit_message(embed=embed, view=self)
 
-        async def next_page(self, interaction: discord.Interaction):
+        async def next_page(self, interaction: Interaction):
             if self.page < self.max_page - 1:
                 self.page += 1
                 await self.update_message(interaction)
 
-        async def prev_page(self, interaction: discord.Interaction):
+        async def prev_page(self, interaction: Interaction):
             if self.page > 0:
                 self.page -= 1
                 await self.update_message(interaction)
 
-        async def filter_items(self, interaction: discord.Interaction):
+        async def filter_items(self, interaction: Interaction):
             value = self.filter_select.values[0]
             if value == "all":
                 self.filtered_data = self.data
             else:
                 self.filtered_data = [item for item in self.data if item.get("type", "").lower() == value]
             self.page = 0
-            self.max_page = max(1, math.ceil(len(self.filtered_data) / self.items_per_page))
+            self.max_page = max(1, (len(self.filtered_data) + self.items_per_page - 1) // self.items_per_page)
             await self.update_message(interaction)
 
     view = ItemInfoView(data, ctx)
     embed = view.get_embed()
     await ctx.send(embed=embed, view=view)
+
 
 
 # ------------------------------------------------
