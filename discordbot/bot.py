@@ -362,25 +362,25 @@ async def iteminfo(ctx):
         async def interaction_check(self, interaction: Interaction) -> bool:
             return interaction.user == self.original_ctx.author
 
-        def get_embed(self):
-            embed = discord.Embed(
-                title="📦 Item Info",
-                color=discord.Color.teal()
-            )
-            start = self.page * self.items_per_page
-            end = start + self.items_per_page
-            for item in self.filtered_data[start:end]:
-                name = item.get("name", "Unknown")
-                item_type = item.get("type", "Unknown")
-                buy_price = item.get("buyPrice", "N/A")
-                sell_value = item.get("sellValue", "N/A")
-                embed.add_field(
-                    name=f"**{name}**",
-                    value=f"Type: `{item_type}`\nBuy: `{buy_price}`\nSell: `{sell_value}`",
-                    inline=True
-                )
-            embed.set_footer(text=f"Page {self.page + 1}/{self.max_page}")
-            return embed
+       def get_embed(self):
+    embed = discord.Embed(
+        title="📦 Item Info",
+        color=discord.Color.teal()
+    )
+    start = self.page * self.items_per_page
+    end = start + self.items_per_page
+    for item in self.filtered_data[start:end]:
+        name = item.get("name", "Unknown")
+        item_type = item.get("type", "Unknown")
+        buy_price = item.get("buyPrice") or item.get("buyprice") or "N/A"
+        sell_value = item.get("sellValue") or item.get("sellvalue") or "N/A"
+        embed.add_field(
+            name=f"**{name}**",
+            value=f"Type: `{item_type}`\nBuy: `{buy_price}`\nSell: `{sell_value}`",
+            inline=True
+        )
+    embed.set_footer(text=f"Page {self.page + 1}/{self.max_page}")
+    return embed
 
         async def update_message(self, interaction):
             embed = self.get_embed()
