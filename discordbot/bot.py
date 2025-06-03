@@ -286,21 +286,7 @@ async def unmute(ctx, member: discord.Member):
     else:
         await ctx.send(f"❌ {member} is not muted.")
 
-# ----- Your requested commands added below -----
-
-@bot.command()
-async def leaderboard(ctx):
-    # Example placeholder leaderboard, customize as needed
-    leaderboard_data = [
-        {"username": "Number 1", "points": 3},
-        {"username": "Number2", "points": 2},
-        {"username": "Number 3", "points": 1},
-    ]
-    embed = discord.Embed(title="🏆 Grow A Garden Leaderboard", color=discord.Color.gold())
-    for i, entry in enumerate(leaderboard_data, start=1):
-        embed.add_field(name=f"#{i} - {entry['username']}", value=f"Points: **{entry['points']}**", inline=False)
-    embed.set_footer(text="Top 3 players")
-    await ctx.send(embed=embed)
+# ------- new commands
 
 @bot.command()
 async def ping(ctx):
@@ -318,7 +304,7 @@ async def help_command(ctx):
     embed.add_field(name="Grow A Garden", value="``!seeds``, ``!stock [category]``, ``!autostock on/off``, ``!lastupdate``, ``!restocklog``, ``!setpingrole @role``, ``!faq``, ``!weather``", inline=False)
     embed.add_field(name="Moderation", value="``!kick``, ``!ban``, ``!mute``, ``!unmute``, ``!clear [amount]``, ``!slowmode [sec]``, ``!autorole @role``", inline=False)
     embed.add_field(name="Utility", value="``!uptime``, ``!loggingchannel``, ``!ping``", inline=False)
-    embed.add_field(name="Fun", value="``!leaderboard``", inline=False)
+    embed.add_field(name="Fun", value="``coming soon``", inline=False)
     embed.set_footer(text="Bot by summer 2000")
     await ctx.send(embed=embed)
 
