@@ -310,71 +310,88 @@ async def help_command(ctx):
 
 # --- item info command
 
-from discord.ui import View, Button
+from discord.ui import View, Button, Select
 
 @bot.command()
 async def iteminfo(ctx):
     url = "https://growagardenapi.vercel.app/api/Item-Info"
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if response.status != 200:
-                    return await ctx.send(f"❌ Failed to fetch item info. Status: {response.status}")
-                data = await response.json()
-
-        if not data or not isinstance(data, list):
-            return await ctx.send("❌ No items found.")
-
-        class ItemView(View):
-            def __init__(self, items):
-                super().__init__(timeout=60)
-                self.items = items
-                self.index = 0
-
-                self.prev_button = Button(label="⬅️", style=discord.ButtonStyle.primary)
-                self.next_button = Button(label="➡️", style=discord.ButtonStyle.primary)
-
-                self.prev_button.callback = self.go_previous
-                self.next_button.callback = self.go_next
-
-                self.add_item(self.prev_button)
-                self.add_item(self.next_button)
-
-            async def update_embed(self, interaction):
-                item = self.items[self.index]
-                embed = discord.Embed(
-                    title=f"{item.get('name', 'Unknown')}",
-                    description=item.get('description', 'No description'),
-                    color=discord.Color.green()
-                )
-                embed.add_field(name="Rarity", value=item.get('rarity', 'Unknown'))
-                embed.add_field(name="Value", value=item.get('value', 'Unknown'))
-                embed.set_footer(text=f"Item {self.index + 1} of {len(self.items)}")
-                await interaction.response.edit_message(embed=embed, view=self)
-
-            async def go_previous(self, interaction):
-                self.index = (self.index - 1) % len(self.items)
-                await self.update_embed(interaction)
-
-            async def go_next(self, interaction):
-                self.index = (self.index + 1) % len(self.items)
-                await self.update_embed(interaction)
-
-        view = ItemView(data)
-        first_item = data[0]
-        embed = discord.Embed(
-            title=f"{first_item.get('name', 'Unknown')}",
-            description=first_item.get('description', 'No description'),
-            color=discord.Color.green()
-        )
-        embed.add_field(name="Rarity", value=first_item.get('rarity', 'Unknown'))
-        embed.add_field(name="Value", value=first_item.get('value', 'Unknown'))
-        embed.set_footer(text=f"Item 1 of {len(data)}")
-
-        await ctx.send(embed=embed, view=view)
-
+            async with session.get(url) as resp:
+                items = await resp.json()
     except Exception as e:
-        await ctx.send(f"❌ Error fetching item info: `{e}`")
+        await ctx.send(f"❌ Error fetching item info: {e}")
+        return
+
+    class ItemView(View):
+        def __init__(self):
+            super().__init__(timeout=60)
+            self.page = 0
+            self.filtered = items
+            self.max_pages = (len(self.filtered) - 1) // 9 + 1
+            self.update_buttons()
+
+        def update_buttons(self):
+            self.clear_items()
+            self.add_item(Select(
+                placeholder="Filter by rarity...",
+                options=[
+                    discord.SelectOption(label="All", value="all"),
+                    discord.SelectOption(label="Common", value="Common"),
+                    discord.SelectOption(label="Uncommon", value="Uncommon"),
+                    discord.SelectOption(label="Rare", value="Rare"),
+                    discord.SelectOption(label="Epic", value="Epic"),
+                    discord.SelectOption(label="Legendary", value="Legendary"),
+                ],
+                custom_id="filter_select"
+            ))
+            self.add_item(Button(label="⬅️", custom_id="prev", disabled=self.page == 0))
+            self.add_item(Button(label="➡️", custom_id="next", disabled=self.page == self.max_pages - 1))
+
+        async def interaction_check(self, interaction):
+            return interaction.user == ctx.author
+
+        async def on_error(self, error, item, interaction):
+            await interaction.response.send_message("❌ An error occurred.", ephemeral=True)
+
+        async def interaction_handler(self, interaction: discord.Interaction):
+            cid = interaction.data["custom_id"]
+            if cid == "prev":
+                self.page -= 1
+            elif cid == "next":
+                self.page += 1
+            elif cid == "filter_select":
+                selected = interaction.data["values"][0]
+                if selected == "all":
+                    self.filtered = items
+                else:
+                    self.filtered = [i for i in items if i.get("rarity") == selected]
+                self.page = 0
+                self.max_pages = (len(self.filtered) - 1) // 9 + 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+        def get_embed(self):
+            start = self.page * 9
+            end = start + 9
+            page_items = self.filtered[start:end]
+            embed = discord.Embed(
+                title=f"📦 Item Info - Page {self.page + 1}/{self.max_pages}",
+                color=discord.Color.green()
+            )
+            for item in page_items:
+                name = item.get("name", "Unknown")
+                rarity = item.get("rarity", "Unknown")
+                desc = item.get("description", "No description.")
+                image = item.get("image", None)
+                embed.add_field(name=f"{name} ({rarity})", value=desc, inline=False)
+            if page_items and page_items[0].get("image"):
+                embed.set_image(url=page_items[0]["image"])
+            return embed
+
+    view = ItemView()
+    await ctx.send(embed=view.get_embed(), view=view)
+
 
 
 # ------------------------------------------------
