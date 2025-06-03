@@ -304,5 +304,61 @@ async def help_command(ctx):
     embed.add_field(name="Utility", value="`!uptime`, `!loggingchannel`", inline=False)
     embed.set_footer(text="Bot by summer 2000")
     await ctx.send(embed=embed)
+@bot.command()
+async def rblxusername(ctx, username: str):
+    async with aiohttp.ClientSession() as session:
+        # Get user info
+        async with session.get(f"https://users.roblox.com/v1/usernames/users", json={"usernames": [username]}) as resp:
+            if resp.status != 200:
+                return await ctx.send("❌ Failed to fetch user info.")
+            user_data = await resp.json()
+            if not user_data.get("data"):
+                return await ctx.send("❌ User not found.")
+            user_info = user_data["data"][0]
+            user_id = user_info["id"]
+
+        # Get additional info
+        async with session.get(f"https://users.roblox.com/v1/users/{user_id}") as resp:
+            extra_info = await resp.json()
+
+        # Get presence (online/offline)
+        async with session.post("https://presence.roblox.com/v1/presence/users", json={"userIds": [user_id]}) as resp:
+            presence_data = await resp.json()
+            presence = presence_data["userPresences"][0]["userPresenceType"]
+            status = "🟢 Online" if presence != 0 else "⚪ Offline"
+
+        # Get friends count
+        async with session.get(f"https://friends.roblox.com/v1/users/{user_id}/friends/count") as resp:
+            friends = await resp.json()
+
+        # Get followers
+        async with session.get(f"https://friends.roblox.com/v1/users/{user_id}/followers/count") as resp:
+            followers = await resp.json()
+
+        # Get following
+        async with session.get(f"https://friends.roblox.com/v1/users/{user_id}/followings/count") as resp:
+            following = await resp.json()
+
+        # Get avatar
+        async with session.get(f"https://thumbnails.roblox.com/v1/users/avatar?userIds={user_id}&size=420x420&format=Png&isCircular=false") as resp:
+            avatar = await resp.json()
+            avatar_url = avatar["data"][0]["imageUrl"]
+
+        # Profile link
+        profile_link = f"https://www.roblox.com/users/{user_id}/profile"
+
+        # Embed
+        embed = discord.Embed(title=f"🔎 Roblox User: {username}", color=discord.Color.blue())
+        embed.set_thumbnail(url=avatar_url)
+        embed.add_field(name="Username", value=user_info["name"], inline=True)
+        embed.add_field(name="User ID", value=user_id, inline=True)
+        embed.add_field(name="Join Date", value=extra_info.get("created", "Unknown")[:10], inline=True)
+        embed.add_field(name="Status", value=status, inline=True)
+        embed.add_field(name="Bio", value=extra_info.get("description", "None"), inline=False)
+        embed.add_field(name="Followers", value=str(followers.get("count", 0)), inline=True)
+        embed.add_field(name="Following", value=str(following.get("count", 0)), inline=True)
+        embed.add_field(name="Friends", value=str(friends.get("count", 0)), inline=True)
+        embed.add_field(name="Profile Link", value=f"[View Profile]({profile_link})", inline=False)
+        await ctx.send(embed=embed)
 
 bot.run(os.getenv("DISCORD_TOKEN"))
