@@ -164,7 +164,7 @@ async def restocklog(ctx):
         await ctx.send("📭 No restocks logged yet.")
         return
     lines = [f"{time} - {', '.join(items)}" for time, items in restock_log[-5:]]
-    await ctx.send("📝 **Recent Restocks:**``\n" + "\n".join(lines))``
+    await ctx.send("📝 **Recent Restocks:**``\n" + "\n".join``(lines))
 
 @bot.command()
 async def uptime(ctx):
