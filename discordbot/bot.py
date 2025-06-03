@@ -292,9 +292,9 @@ async def unmute(ctx, member: discord.Member):
 async def leaderboard(ctx):
     # Example placeholder leaderboard, customize as needed
     leaderboard_data = [
-        {"username": "LeafyLad", "points": 1500},
-        {"username": "BeeBoss", "points": 1300},
-        {"username": "SeedQueen", "points": 1100},
+        {"username": "Number 1", "points": 3},
+        {"username": "Number2", "points": 2},
+        {"username": "Number 3", "points": 1},
     ]
     embed = discord.Embed(title="🏆 Grow A Garden Leaderboard", color=discord.Color.gold())
     for i, entry in enumerate(leaderboard_data, start=1):
