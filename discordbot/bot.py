@@ -271,94 +271,42 @@ async def mute(ctx, member: discord.Member, *, reason=None):
             for channel in ctx.guild.channels:
                 await channel.set_permissions(muted_role, speak=False, send_messages=False, add_reactions=False)
         except Exception as e:
-            await ctx.send(f"❌ Failed to create 'Muted' role. Error: {e}")
+            await ctx.send(f"❌ Could not create Muted role. Error: {e}")
             return
-    try:
-        await member.add_roles(muted_role, reason=reason)
-        await ctx.send(f"✅ Muted {member} for: {reason or 'No reason provided.'}")
-    except Exception as e:
-        await ctx.send(f"❌ Could not mute {member}. Error: {e}")
+    await member.add_roles(muted_role, reason=reason)
+    await ctx.send(f"🔇 Muted {member}.")
 
 @bot.command()
 @commands.has_permissions(manage_roles=True)
 async def unmute(ctx, member: discord.Member):
     muted_role = discord.utils.get(ctx.guild.roles, name="Muted")
-    if not muted_role:
-        await ctx.send("❌ No 'Muted' role found.")
-        return
-    try:
+    if muted_role in member.roles:
         await member.remove_roles(muted_role)
-        await ctx.send(f"✅ Unmuted {member}.")
-    except Exception as e:
-        await ctx.send(f"❌ Could not unmute {member}. Error: {e}")
+        await ctx.send(f"🔈 Unmuted {member}.")
+    else:
+        await ctx.send(f"❌ {member} is not muted.")
 
-@bot.command(name="help")
-async def help_command(ctx):
-    embed = discord.Embed(
-        title="Help Menu",
-        description="Here are the available commands:",
-        color=discord.Color.blue()
-    )
-    embed.add_field(name="Grow A Garden", value="`!seeds`, `!stock [category]`, `!autostock on/off`, `!lastupdate`, `!restocklog`, `!setpingrole @role`, `!faq`, `!weather`", inline=False)
-    embed.add_field(name="Moderation", value="`!kick`, `!ban`, `!mute`, `!unmute`, `!clear [amount]`, `!slowmode [sec]`, `!autorole @role`", inline=False)
-    embed.add_field(name="Utility", value="`!uptime`, `!loggingchannel`", inline=False)
-    embed.set_footer(text="Bot by summer 2000")
-    await ctx.send(embed=embed)
+# ----- Your requested commands added below -----
+
 @bot.command()
-async def rblxusername(ctx, username: str):
-    async with aiohttp.ClientSession() as session:
-        # Get user info (POST request with JSON payload)
-        async with session.post("https://users.roblox.com/v1/usernames/users", json={"usernames": [username]}) as resp:
-            if resp.status != 200:
-                return await ctx.send("❌ Failed to fetch user info.")
-            user_data = await resp.json()
-            if not user_data.get("data"):
-                return await ctx.send("❌ User not found.")
-            user_info = user_data["data"][0]
-            user_id = user_info["id"]
+async def leaderboard(ctx):
+    # Example placeholder leaderboard, customize as needed
+    leaderboard_data = [
+        {"username": "LeafyLad", "points": 1500},
+        {"username": "BeeBoss", "points": 1300},
+        {"username": "SeedQueen", "points": 1100},
+    ]
+    embed = discord.Embed(title="🏆 Grow A Garden Leaderboard", color=discord.Color.gold())
+    for i, entry in enumerate(leaderboard_data, start=1):
+        embed.add_field(name=f"#{i} - {entry['username']}", value=f"Points: **{entry['points']}**", inline=False)
+    embed.set_footer(text="Top 3 players")
+    await ctx.send(embed=embed)
 
-        # Get additional info
-        async with session.get(f"https://users.roblox.com/v1/users/{user_id}") as resp:
-            extra_info = await resp.json()
+@bot.command()
+async def ping(ctx):
+    latency = round(bot.latency * 1000)
+    await ctx.send(f"🏓 Pong! `{latency}ms`")
 
-        # Get presence (online/offline)
-        async with session.post("https://presence.roblox.com/v1/presence/users", json={"userIds": [user_id]}) as resp:
-            presence_data = await resp.json()
-            presence = presence_data["userPresences"][0]["userPresenceType"]
-            status = "🟢 Online" if presence != 0 else "⚪ Offline"
+# ------------------------------------------------
 
-        # Get friends count
-        async with session.get(f"https://friends.roblox.com/v1/users/{user_id}/friends/count") as resp:
-            friends = await resp.json()
-
-        # Get followers
-        async with session.get(f"https://friends.roblox.com/v1/users/{user_id}/followers/count") as resp:
-            followers = await resp.json()
-
-        # Get following
-        async with session.get(f"https://friends.roblox.com/v1/users/{user_id}/followings/count") as resp:
-            following = await resp.json()
-
-        # Get avatar
-        async with session.get(f"https://thumbnails.roblox.com/v1/users/avatar?userIds={user_id}&size=420x420&format=Png&isCircular=false") as resp:
-            avatar = await resp.json()
-            avatar_url = avatar["data"][0]["imageUrl"]
-
-        # Profile link
-        profile_link = f"https://www.roblox.com/users/{user_id}/profile"
-
-        # Embed
-        embed = discord.Embed(title=f"🔎 Roblox User: {username}", color=discord.Color.blue())
-        embed.set_thumbnail(url=avatar_url)
-        embed.add_field(name="Username", value=user_info["name"], inline=True)
-        embed.add_field(name="User ID", value=user_id, inline=True)
-        embed.add_field(name="Join Date", value=extra_info.get("created", "Unknown")[:10], inline=True)
-        embed.add_field(name="Status", value=status, inline=True)
-        embed.add_field(name="Bio", value=extra_info.get("description", "None"), inline=False)
-        embed.add_field(name="Followers", value=str(followers.get("count", 0)), inline=True)
-        embed.add_field(name="Following", value=str(following.get("count", 0)), inline=True)
-        embed.add_field(name="Friends", value=str(friends.get("count", 0)), inline=True)
-        embed.add_field(name="Profile Link", value=f"[View Profile]({profile_link})", inline=False)
-        await ctx.send(embed=embed)
-
-bot.run(os.getenv("DISCORD_TOKEN"))
+bot.run(os.getenv("TOKEN"))  
