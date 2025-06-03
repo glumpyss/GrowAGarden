@@ -307,6 +307,21 @@ async def ping(ctx):
     latency = round(bot.latency * 1000)
     await ctx.send(f"🏓 Pong! `{latency}ms`")
 
+
+@bot.command(name="help")
+async def help_command(ctx):
+    embed = discord.Embed(
+        title="Help Menu",
+        description="Here are the available commands:",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="Grow A Garden", value="!seeds, !stock [category], !autostock on/off, !lastupdate, !restocklog, !setpingrole @role, !faq, !weather", inline=False)
+    embed.add_field(name="Moderation", value="!kick, !ban, !mute, !unmute, !clear [amount], !slowmode [sec], !autorole @role", inline=False)
+    embed.add_field(name="Utility", value="!uptime, !loggingchannel, !ping", inline=False)
+    embed.add_field(name="Fun", value="!leaderboard", inline=False)
+    embed.set_footer(text="Bot by summer 2000")
+    await ctx.send(embed=embed)
+
 # ------------------------------------------------
 
 bot.run(os.getenv("DISCORD_TOKEN"))  
