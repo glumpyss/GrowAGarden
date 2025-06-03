@@ -301,12 +301,67 @@ async def help_command(ctx):
         description="Here are the available commands:",
         color=discord.Color.blue()
     )
-    embed.add_field(name="Grow A Garden", value="``!seeds``, ``!stock [category]``, ``!autostock on/off``, ``!lastupdate``, ``!restocklog``, ``!setpingrole @role``, ``!faq``, ``!weather``", inline=False)
+    embed.add_field(name="Grow A Garden", value="``!seeds``, ``!stock [category]``, ``!autostock on/off``, ``!lastupdate``, ``!restocklog``, ``!setpingrole @role``, ``!faq``,``!iteminfo``, ``!weather``", inline=False)
     embed.add_field(name="Moderation", value="``!kick``, ``!ban``, ``!mute``, ``!unmute``, ``!clear [amount]``, ``!slowmode [sec]``, ``!autorole @role``", inline=False)
     embed.add_field(name="Utility", value="``!uptime``, ``!loggingchannel``, ``!ping``", inline=False)
     embed.add_field(name="Fun", value="``coming soon``", inline=False)
     embed.set_footer(text="Bot by summer 2000")
     await ctx.send(embed=embed)
+class ItemInfoView(discord.ui.View):
+    def __init__(self, items):
+        super().__init__(timeout=120)
+        self.items = items
+        self.current_page = 0
+
+    def create_embed(self):
+        item = self.items[self.current_page]
+        embed = discord.Embed(
+            title=f"🌱 Item Info - {item.get('name', 'Unknown')}",
+            description=item.get('description', 'No description available.'),
+            color=discord.Color.green()
+        )
+        embed.add_field(name="Value", value=str(item.get('value', 'N/A')), inline=True)
+        embed.add_field(name="Category", value=item.get('category', 'N/A'), inline=True)
+        embed.set_footer(text=f"Page {self.current_page + 1} of {len(self.items)}")
+        return embed
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.primary)
+    async def previous(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page > 0:
+            self.current_page -= 1
+            await interaction.response.edit_message(embed=self.create_embed(), view=self)
+        else:
+            await interaction.response.defer()
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary)
+    async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page < len(self.items) - 1:
+            self.current_page += 1
+            await interaction.response.edit_message(embed=self.create_embed(), view=self)
+        else:
+            await interaction.response.defer()
+
+@bot.command(name="iteminfo")
+async def iteminfo(ctx):
+    url = "https://growagardenapi.vercel.app/api/Item-Info"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    items = data.get('items', [])
+                    if not items:
+                        await ctx.send("❌ No item info found from the API.")
+                        return
+                    view = ItemInfoView(items)
+                    await ctx.send(embed=view.create_embed(), view=view)
+                else:
+                    await ctx.send(f"❌ Failed to fetch item info. Status code: {response.status}")
+    except Exception as e:
+        await ctx.send("❌ Error fetching item info.")
+        if log_channel:
+            await log_channel.send(f"❗ **ItemInfo Error:** `{e}`")
+
 
 # ------------------------------------------------
 
