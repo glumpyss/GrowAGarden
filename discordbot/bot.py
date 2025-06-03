@@ -310,8 +310,6 @@ async def help_command(ctx):
 
 # --- item info command
 
-from discord.ui import View, Button, Select
-
 @bot.command()
 async def iteminfo(ctx):
     url = "https://growagardenapi.vercel.app/api/Item-Info"
@@ -382,13 +380,13 @@ async def iteminfo(ctx):
             for item in page_items:
                 name = item.get("name", "Unknown")
                 rarity = item.get("rarity", "Unknown")
-                desc = item.get("description", "No description.")
+                desc = item.get("description", "No description.")[:50]  # short description
                 buy = item.get("buyPrice", "N/A")
                 sell = item.get("sellValue", "N/A")
                 embed.add_field(
                     name=f"{name} ({rarity})",
                     value=f"{desc}\n💰 Buy: {buy} | Sell: {sell}",
-                    inline=False
+                    inline=True
                 )
             return embed
 
