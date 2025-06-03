@@ -309,89 +309,107 @@ async def help_command(ctx):
     await ctx.send(embed=embed)
 
 # --- item info command
+from discord.ui import View, Button, Select
+from discord import Interaction
+import math
 
 @bot.command()
 async def iteminfo(ctx):
-    url = "https://growagardenapi.vercel.app/api/Item-Info"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                items = await resp.json()
-    except Exception as e:
-        await ctx.send(f"❌ Error fetching item info: {e}")
-        return
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get("https://growagardenapi.vercel.app/api/Item-Info") as resp:
+                if resp.status != 200:
+                    await ctx.send("❌ Error fetching item info.")
+                    return
+                data = await resp.json()
+        except Exception as e:
+            await ctx.send(f"❌ Error fetching item info: {e}")
+            return
 
-    class ItemView(View):
-        def __init__(self):
+    class ItemInfoView(View):
+        def __init__(self, data, ctx):
             super().__init__(timeout=60)
+            self.original_ctx = ctx
+            self.ctx = ctx
+            self.data = data
+            self.filtered_data = data
             self.page = 0
-            self.filtered = items
-            self.max_pages = (len(self.filtered) - 1) // 9 + 1
-            self.update_buttons()
+            self.items_per_page = 9
+            self.max_page = math.ceil(len(self.filtered_data) / self.items_per_page)
 
-        def update_buttons(self):
-            self.clear_items()
-            self.add_item(Select(
-                placeholder="Filter by rarity...",
+            self.filter_select = Select(
+                placeholder="Filter by Category",
                 options=[
                     discord.SelectOption(label="All", value="all"),
-                    discord.SelectOption(label="Common", value="Common"),
-                    discord.SelectOption(label="Uncommon", value="Uncommon"),
-                    discord.SelectOption(label="Rare", value="Rare"),
-                    discord.SelectOption(label="Epic", value="Epic"),
-                    discord.SelectOption(label="Legendary", value="Legendary"),
-                ],
-                custom_id="filter_select"
-            ))
-            self.add_item(Button(label="⬅️", custom_id="prev", disabled=self.page == 0))
-            self.add_item(Button(label="➡️", custom_id="next", disabled=self.page == self.max_pages - 1))
+                    discord.SelectOption(label="Seeds", value="seed"),
+                    discord.SelectOption(label="Gear", value="gear"),
+                    discord.SelectOption(label="Eggs", value="egg"),
+                    discord.SelectOption(label="Bees", value="bee"),
+                    discord.SelectOption(label="Cosmetics", value="cosmetic"),
+                ]
+            )
+            self.filter_select.callback = self.filter_items
+            self.add_item(self.filter_select)
 
-        async def interaction_check(self, interaction):
-            return interaction.user == ctx.author
+            self.prev_button = Button(label="⬅️ Prev", style=discord.ButtonStyle.secondary)
+            self.prev_button.callback = self.prev_page
+            self.add_item(self.prev_button)
 
-        async def on_error(self, error, item, interaction):
-            await interaction.response.send_message("❌ An error occurred.", ephemeral=True)
+            self.next_button = Button(label="Next ➡️", style=discord.ButtonStyle.secondary)
+            self.next_button.callback = self.next_page
+            self.add_item(self.next_button)
 
-        async def interaction_handler(self, interaction: discord.Interaction):
-            cid = interaction.data["custom_id"]
-            if cid == "prev":
-                self.page -= 1
-            elif cid == "next":
-                self.page += 1
-            elif cid == "filter_select":
-                selected = interaction.data["values"][0]
-                if selected == "all":
-                    self.filtered = items
-                else:
-                    self.filtered = [i for i in items if i.get("rarity") == selected]
-                self.page = 0
-                self.max_pages = (len(self.filtered) - 1) // 9 + 1
-            self.update_buttons()
-            await interaction.response.edit_message(embed=self.get_embed(), view=self)
+        async def interaction_check(self, interaction: Interaction) -> bool:
+            return interaction.user == self.original_ctx.author
 
         def get_embed(self):
-            start = self.page * 9
-            end = start + 9
-            page_items = self.filtered[start:end]
             embed = discord.Embed(
-                title=f"📦 Item Info - Page {self.page + 1}/{self.max_pages}",
-                color=discord.Color.green()
+                title="📦 Item Info",
+                color=discord.Color.teal()
             )
-            for item in page_items:
+            start = self.page * self.items_per_page
+            end = start + self.items_per_page
+            for item in self.filtered_data[start:end]:
                 name = item.get("name", "Unknown")
-                rarity = item.get("rarity", "Unknown")
-                desc = item.get("description", "No description.")[:50]  # short description
-                buy = item.get("buyPrice", "N/A")
-                sell = item.get("sellValue", "N/A")
+                item_type = item.get("type", "Unknown")
+                buy_price = item.get("buyPrice", "N/A")
+                sell_value = item.get("sellValue", "N/A")
                 embed.add_field(
-                    name=f"{name} ({rarity})",
-                    value=f"{desc}\n💰 Buy: {buy} | Sell: {sell}",
+                    name=f"**{name}**",
+                    value=f"Type: `{item_type}`\nBuy: `{buy_price}`\nSell: `{sell_value}`",
                     inline=True
                 )
+            embed.set_footer(text=f"Page {self.page + 1}/{self.max_page}")
             return embed
 
-    view = ItemView()
-    await ctx.send(embed=view.get_embed(), view=view)
+        async def update_message(self, interaction):
+            embed = self.get_embed()
+            await interaction.response.edit_message(embed=embed, view=self)
+
+        async def next_page(self, interaction: Interaction):
+            if self.page < self.max_page - 1:
+                self.page += 1
+                await self.update_message(interaction)
+
+        async def prev_page(self, interaction: Interaction):
+            if self.page > 0:
+                self.page -= 1
+                await self.update_message(interaction)
+
+        async def filter_items(self, interaction: Interaction):
+            value = self.filter_select.values[0]
+            if value == "all":
+                self.filtered_data = self.data
+            else:
+                self.filtered_data = [item for item in self.data if item.get("type", "").lower() == value]
+            self.page = 0
+            self.max_page = max(1, math.ceil(len(self.filtered_data) / self.items_per_page))
+            await self.update_message(interaction)
+
+    view = ItemInfoView(data, ctx)
+    embed = view.get_embed()
+    await ctx.send(embed=embed, view=view)
+
 
 
 
