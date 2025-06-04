@@ -78,7 +78,7 @@ def create_stock_embed(data, title="Current Stock Information"):
                 inline=False
             )
             # Only add one such warning field to avoid spam
-            break 
+            break
     return embed
 
 # --- Events ---
@@ -230,7 +230,8 @@ async def autostock_toggle(ctx, status: str = None):
 @tasks.loop(minutes=5) # Checks every 5 minutes
 async def autostock_checker():
     """Background task to check for new stock updates."""
-    global LAST_STOCK_DATA, AUTOSTOCK_ENABLED, AUTOSTOCK_CHANNEL_ID, STOCK_LOGS
+    # Moved global declaration to the very top to fix the SyntaxError
+    global AUTOSTOCK_ENABLED, LAST_STOCK_DATA, AUTOSTOCK_CHANNEL_ID, STOCK_LOGS
 
     if not AUTOSTOCK_ENABLED or AUTOSTOCK_CHANNEL_ID is None:
         return
@@ -278,7 +279,7 @@ async def autostock_checker():
         else:
             print(f"Autostock: Configured channel with ID {AUTOSTOCK_CHANNEL_ID} not found or inaccessible. Disabling autostock.")
             # Optionally, disable autostock if the channel is no longer found
-            global AUTOSTOCK_ENABLED
+            global AUTOSTOCK_ENABLED # Need global here too if modifying within this block
             AUTOSTOCK_ENABLED = False
 
 
