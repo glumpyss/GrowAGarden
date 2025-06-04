@@ -75,20 +75,32 @@ def save_dm_users():
 
 
 # --- Helper Function for API Calls ---
-async def fetch_api_data(url):
+async def fetch_api_data(url, method='GET', json_data=None):
     """Fetches data from a given API URL."""
     async with aiohttp.ClientSession() as session:
         try:
-            async with session.get(url) as response:
-                print(f"API Response Status ({url}): {response.status}")
-                response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-                try:
-                    json_data = await response.json()
-                    return json_data
-                except aiohttp.ContentTypeError:
-                    text_data = await response.text()
-                    print(f"API Error: Content-Type is not application/json for {url}. Raw text: {text_data}")
-                    return None
+            if method == 'GET':
+                async with session.get(url) as response:
+                    print(f"API Response Status ({url}): {response.status}")
+                    response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+                    try:
+                        json_data = await response.json()
+                        return json_data
+                    except aiohttp.ContentTypeError:
+                        text_data = await response.text()
+                        print(f"API Error: Content-Type is not application/json for {url}. Raw text: {text_data}")
+                        return None
+            elif method == 'POST':
+                async with session.post(url, json=json_data) as response:
+                    print(f"API Response Status ({url}): {response.status}")
+                    response.raise_for_status()
+                    try:
+                        json_data = await response.json()
+                        return json_data
+                    except aiohttp.ContentTypeError:
+                        text_data = await response.text()
+                        print(f"API Error: Content-Type is not application/json for {url}. Raw text: {text_data}")
+                        return None
         except aiohttp.ClientError as e:
             print(f"API Client Error (network/connection issue) for {url}: {e}")
             return None
@@ -971,6 +983,7 @@ async def help_command(ctx):
     utility_commands_desc = (
         f"`!weather`: Displays current in-game weather conditions (e.g., Rain, Sunny).\n" # Updated description
         f"`!uptime`: Shows how long the bot has been online.\n"
+        f"`!rblxusername <username>`: Finds a Roblox player's profile by username.\n"
         f"`!cmds` (or `!commands`, `!help`): Displays this help message."
     )
     embed.add_field(name="__Utility Commands__", value=utility_commands_desc, inline=False)
@@ -1036,6 +1049,160 @@ async def seed_stock_dm_toggle(ctx):
     await ctx.send(embed=embed)
     await ctx.author.send(f"Your GrowAGarden seed stock DM notifications are now **{status_message}**.")
 
+
+# --- Roblox Username Lookup Command ---
+@bot.command(name="rblxusername")
+@commands.has_permissions(manage_roles=True) # Requires "Manage Roles" permission
+@commands.bot_has_permissions(send_messages=True, embed_links=True) # Bot needs to send messages and embeds
+async def rblxusername(ctx, *, username: str):
+    """
+    Finds a Roblox player's profile by their username.
+    Displays avatar, username, user ID, online/offline status, followers, friends,
+    date joined, following, display name, and about me.
+    Usage: !rblxusername <Roblox Username>
+    """
+    # Check for the specific role ID
+    required_role = discord.utils.get(ctx.author.roles, id=1302076375922118696)
+    if not required_role:
+        embed = discord.Embed(
+            title="Permission Denied",
+            description=f"You need the role with ID `{1302076375922118696}` to use this command.",
+            color=discord.Color.red(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000")
+        await ctx.send(embed=embed, delete_after=10)
+        return
+
+    await ctx.send(f"Searching for Roblox user '{username}'... please wait.")
+
+    try:
+        # Step 1: Get User ID from Username
+        username_api_url = "https://users.roblox.com/v1/usernames/users"
+        payload = {"usernames": [username], "excludeBannedUsers": False}
+        user_data_response = await fetch_api_data(username_api_url, method='POST', json_data=payload)
+
+        if not user_data_response or not user_data_response.get('data'):
+            await ctx.send(f"Could not find a Roblox user with the username: `{username}`. Please check the spelling.")
+            return
+
+        user_id = user_data_response['data'][0]['id']
+        found_username = user_data_response['data'][0]['name']
+        display_name = user_data_response['data'][0]['displayName']
+
+        # Step 2: Get User Profile Details
+        profile_api_url = f"https://users.roblox.com/v1/users/{user_id}"
+        profile_data = await fetch_api_data(profile_api_url)
+
+        if not profile_data:
+            await ctx.send(f"Could not retrieve full profile details for user ID `{user_id}`. The Roblox API might be experiencing issues.")
+            return
+
+        # Step 3: Get User's Avatar
+        avatar_api_url = f"https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds={user_id}&size=48x48&format=Png&isCircular=false"
+        avatar_data = await fetch_api_data(avatar_api_url)
+        avatar_url = avatar_data['data'][0]['imageUrl'] if avatar_data and avatar_data.get('data') else None
+
+        # Step 4: Get User's Presence (Online/Offline)
+        presence_api_url = "https://presence.roblox.com/v1/presence/users"
+        presence_payload = {"userIds": [user_id]}
+        presence_data = await fetch_api_data(presence_api_url, method='POST', json_data=presence_payload)
+        
+        online_status = "Offline"
+        if presence_data and presence_data.get('userPresences'):
+            # Check for LastLocation and LastOnline for more detailed status
+            user_presence = presence_data['userPresences'][0]
+            if user_presence.get('userPresenceType') == 2: # 2 means InGame
+                online_status = f"Online (Playing: {user_presence.get('lastLocation', 'Unknown Game')})"
+            elif user_presence.get('userPresenceType') == 1: # 1 means Online
+                online_status = "Online (Website)"
+            elif user_presence.get('userPresenceType') == 0: # 0 means Offline
+                online_status = "Offline"
+            else:
+                online_status = "Unknown Status" # Fallback for other types
+
+        # Step 5: Get User's Friends and Followers/Following Counts
+        # Note: Roblox API for friends/followers is often paginated and complex.
+        # For simple counts, we might need to hit specific endpoints or infer.
+        # For this example, we'll use simplified endpoints if available or default to N/A.
+        # The profile_data usually contains some basic info.
+        
+        # Roblox API for friends/followers count is not directly on the user profile endpoint.
+        # It requires separate API calls, which can be rate-limited.
+        # For simplicity, we'll use placeholder or indicate if not directly available.
+        # If you need exact counts, you'd typically hit:
+        # - https://friends.roblox.com/v1/users/{userId}/followers/count
+        # - https://friends.roblox.com/v1/users/{userId}/followings/count
+        # - https://friends.roblox.com/v1/users/{userId}/friends/count
+        
+        # Let's try to fetch these counts if possible
+        followers_count = "N/A"
+        following_count = "N/A"
+        friends_count = "N/A"
+
+        try:
+            followers_res = await fetch_api_data(f"https://friends.roblox.com/v1/users/{user_id}/followers/count")
+            if followers_res and 'count' in followers_res:
+                followers_count = followers_res['count']
+            
+            following_res = await fetch_api_data(f"https://friends.roblox.com/v1/users/{user_id}/followings/count")
+            if following_res and 'count' in following_res:
+                following_count = following_res['count']
+
+            friends_res = await fetch_api_data(f"https://friends.roblox.com/v1/users/{user_id}/friends/count")
+            if friends_res and 'count' in friends_res:
+                friends_count = friends_res['count']
+
+        except Exception as e:
+            print(f"Error fetching friend/follower counts for {user_id}: {e}")
+            # Counts will remain N/A
+
+        # Format joined date
+        joined_date_str = profile_data.get('created', 'N/A')
+        if joined_date_str != 'N/A':
+            try:
+                # Roblox API returns ISO 8601 format, e.g., "2013-05-16T00:00:00.000Z"
+                joined_datetime = datetime.fromisoformat(joined_date_str.replace('Z', '+00:00'))
+                joined_date_formatted = joined_datetime.strftime("%Y-%m-%d %H:%M UTC")
+            except ValueError:
+                joined_date_formatted = "Invalid Date Format"
+        else:
+            joined_date_formatted = "N/A"
+
+        about_me = profile_data.get('description', 'No description provided.')
+        if not about_me.strip(): # Check if description is empty or just whitespace
+            about_me = 'No description provided.'
+        elif len(about_me) > 1024: # Discord embed field value limit
+            about_me = about_me[:1020] + "..." # Truncate if too long
+
+        embed = discord.Embed(
+            title=f"Roblox Profile: {display_name}",
+            url=f"https://www.roblox.com/users/{user_id}/profile",
+            color=discord.Color.blue(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000")
+
+        if avatar_url:
+            embed.set_thumbnail(url=avatar_url)
+
+        embed.add_field(name="Username", value=f"`{found_username}`", inline=True)
+        embed.add_field(name="User ID", value=f"`{user_id}`", inline=True)
+        embed.add_field(name="Display Name", value=f"`{display_name}`", inline=True)
+        embed.add_field(name="Status", value=f"`{online_status}`", inline=True)
+        embed.add_field(name="Followers", value=f"`{followers_count}`", inline=True)
+        embed.add_field(name="Following", value=f"`{following_count}`", inline=True)
+        embed.add_field(name="Friends", value=f"`{friends_count}`", inline=True)
+        embed.add_field(name="Date Joined", value=f"`{joined_date_formatted}`", inline=True)
+        embed.add_field(name="About Me", value=about_me, inline=False) # Not inline for readability
+
+        await ctx.send(embed=embed)
+
+    except aiohttp.ClientError as e:
+        await ctx.send(f"A network error occurred while trying to fetch Roblox data: `{e}`. Please try again later.")
+    except Exception as e:
+        print(f"Error in !rblxusername command for '{username}': {e}")
+        await ctx.send(f"An unexpected error occurred while fetching Roblox profile: `{e}`. Please try again later.")
 
 # --- Connect4 Game Implementation ---
 
@@ -1426,6 +1593,7 @@ async def handle_tictactoe_reaction(reaction, user):
                     await reaction.message.clear_reactions()
                 except discord.Forbidden:
                     pass
+                await reaction.message.channel.send(f"{user.mention}, {error_msg} Please choose another spot.", delete_after=5)
 
                 if game._check_win():
                     game.winner = game.current_turn_emoji
