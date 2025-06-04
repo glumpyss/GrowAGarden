@@ -393,12 +393,12 @@ async def autostock_toggle(ctx, status: str = None):
     else:
         await ctx.send("Invalid status provided. Please use `on` or `off`.")
 
-@tasks.loop(minutes=5) # Checks every 5 minutes
+@tasks.loop(seconds=5) # Checks every 5 seconds for immediate updates
 async def autostock_checker():
     """Background task to check for new stock updates."""
     global AUTOSTOCK_ENABLED, LAST_STOCK_DATA, AUTOSTOCK_CHANNEL_ID, STOCK_LOGS, LAST_KNOWN_DM_ITEM_STATUS, DM_NOTIFIED_USERS
 
-    # --- General Autostock Update ---
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Autostock checker: Fetching stock data...")
     current_stock_data = await fetch_api_data(STOCK_API_URL)
 
     if current_stock_data is None:
@@ -428,6 +428,7 @@ async def autostock_checker():
 
         # Check if stock data has genuinely changed or if it's the first run
         if LAST_STOCK_DATA is None or normalized_current != normalized_last:
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Autostock checker: Stock change detected!")
             if AUTOSTOCK_ENABLED and AUTOSTOCK_CHANNEL_ID is not None:
                 channel = bot.get_channel(AUTOSTOCK_CHANNEL_ID)
                 if channel:
@@ -461,9 +462,14 @@ async def autostock_checker():
                 else:
                     print(f"Autostock: Configured channel with ID {AUTOSTOCK_CHANNEL_ID} not found or inaccessible. Disabling autostock.")
                     AUTOSTOCK_ENABLED = False
+            else:
+                print("Autostock: Not enabled or channel not set, skipping public channel update.")
 
             # Always update LAST_STOCK_DATA with the full, new data after comparison and potential notification
             LAST_STOCK_DATA = current_stock_data
+        else:
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Autostock checker: No stock change detected.")
+
 
         # --- DM Notification Specific Logic (runs regardless of main autostock status) ---
         for api_category_key, monitor_info in DM_MONITORED_CATEGORIES.items():
