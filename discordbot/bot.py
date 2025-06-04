@@ -75,30 +75,26 @@ def create_stock_embed(data, title="Current Stock Information"):
         color=discord.Color.green(),
         timestamp=datetime.utcnow()
     )
-    embed.set_footer(text="GrowAGarden Bot")
+    # Changed the footer text as requested
+    embed.set_footer(text="made by summers 2000")
 
     if not data:
         embed.description = "No stock information available at this time for this category."
         return embed
 
+    # Display up to 5 items to keep the embed concise, or you can adjust this.
+    # For now, it will add all items. If too many, consider splitting or limiting.
     for item in data:
-        required_keys = ['name', 'value', 'image', 'emoji'] # Note: 'value' for quantity, 'image' for URL
-        # The API also sends 'price' and 'quantity', but 'value' is used for quantity in 'seedsStock' and other lists
-        # Let's adjust required_keys to match the actual received data for 'seedsStock'
-        # The log shows 'value' for quantity, not 'quantity'
-        # And no 'category' field on the individual item, only in the top-level key (e.g. 'seedsStock')
-
-        # To be robust, let's use common keys and provide defaults
         item_name = item.get('name', 'N/A')
-        item_quantity = item.get('value', 'N/A') # Using 'value' as per your API response for quantity
+        item_quantity = item.get('value', 'N/A') # Using 'value' for quantity
         item_image = item.get('image')
         item_emoji = item.get('emoji', '')
 
         field_value = f"Quantity: {item_quantity}"
-        if item_image and isinstance(item_image, str): # Ensure image is a string before setting
-            embed.set_thumbnail(url=item_image) # Set thumbnail to the first item's image for visual appeal
-            # If you want each item's image to be displayed, you might need to send multiple embeds
-            # or use image within the field value if Discord supports it (not typically for embed fields)
+        
+        # Only set thumbnail once for the first item to avoid overwriting
+        if item_image and isinstance(item_image, str) and not embed.thumbnail:
+            embed.set_thumbnail(url=item_image)
 
         embed.add_field(
             name=f"{item_name} {item_emoji}",
@@ -141,36 +137,87 @@ async def on_command_error(ctx, error):
         await ctx.send(f"This command is on cooldown. Please try again in `{error.retry_after:.1f}` seconds.")
     else:
         print(f"An unhandled error occurred in command '{ctx.command.name}': {error}")
-        await ctx.send(f"**An unexpected error occurred:** `{error}`. My apologies! Please try again later or contact an administrator.")
+        embed = discord.Embed(
+            title="Command Error",
+            description=f"**An unexpected error occurred:** `{error}`. My apologies! Please try again later or contact an administrator.",
+            color=discord.Color.red(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000") # Footer for error embeds too
+        await ctx.send(embed=embed)
+
 
 # --- Stock Commands ---
 
-@bot.command(name="seeds")
-@commands.cooldown(1, 10, commands.BucketType.channel) # 1 use per 10 seconds per channel
-async def get_seeds(ctx):
+@bot.command(name="stockall", aliases=["seed"]) # Renamed to !stockall, kept !seed as alias
+@commands.cooldown(1, 10, commands.BucketType.channel)
+async def get_all_stock(ctx):
     """
-    Displays current stock information for seeds.
-    Usage: !seeds
+    Displays current stock information for all categories (seeds, eggs, gear, cosmetics, bee/honey, night).
+    Usage: !stockall or !seed
     """
     try:
-        await ctx.send("Fetching seed information... please wait a moment.")
+        await ctx.send("Fetching all stock information... please wait a moment.")
         all_stock_data = await fetch_stock_data()
         if not all_stock_data:
             await ctx.send("Apologies, I couldn't retrieve stock information from the API. It might be down or experiencing issues, or returned no data. Please try again later!")
             return
 
-        # Access the 'seedsStock' key directly from the dictionary
-        seed_data = all_stock_data.get('seedsStock', [])
-        
-        if not seed_data:
-            await ctx.send("Currently, there are no seed stock items available.")
-            return
+        embed = discord.Embed(
+            title="Comprehensive Stock Overview",
+            description="Here's what's currently available across all categories:",
+            color=discord.Color.blue(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000")
 
-        embed = create_stock_embed(seed_data, title="Current Seed Stock")
+        # Define the order of categories to display and their user-friendly names
+        display_categories = {
+            'seedsStock': "Seeds",
+            'eggStock': "Eggs",
+            'gearStock': "Gear",
+            'cosmeticsStock': "Cosmetics",
+            'honeyStock': "Bees & Honey", # Combined as per API structure
+            'nightStock': "Night Stock"
+        }
+
+        found_any_stock = False
+        for api_key, display_name in display_categories.items():
+            category_data = all_stock_data.get(api_key, [])
+            if category_data:
+                found_any_stock = True
+                field_value = ""
+                # Limit items per category to keep embed readable
+                for item in category_data[:5]: # Display up to 5 items per category
+                    item_name = item.get('name', 'N/A')
+                    item_quantity = item.get('value', 'N/A')
+                    item_emoji = item.get('emoji', '')
+                    field_value += f"{item_emoji} {item_name}: **{item_quantity}**\n"
+                
+                if len(category_data) > 5:
+                    field_value += f"...and {len(category_data) - 5} more."
+
+                embed.add_field(
+                    name=f"__**{display_name}**__",
+                    value=field_value if field_value else "No items in this category.",
+                    inline=True
+                )
+            
+        if not found_any_stock:
+            embed.description = "No stock information available across any categories at this time."
+
+
         await ctx.send(embed=embed)
     except Exception as e:
-        print(f"Error in !seeds command: {e}")
-        await ctx.send(f"An unexpected error occurred while processing the `!seeds` command: `{e}`")
+        print(f"Error in !stockall command: {e}")
+        embed = discord.Embed(
+            title="Error",
+            description=f"An unexpected error occurred while processing the `!stockall` command: `{e}`",
+            color=discord.Color.red(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000")
+        await ctx.send(embed=embed)
 
 @bot.command(name="stock")
 @commands.cooldown(1, 10, commands.BucketType.channel) # 1 use per 10 seconds per channel
@@ -219,7 +266,14 @@ async def get_stock_by_category(ctx, category: str = None):
         await ctx.send(embed=embed)
     except Exception as e:
         print(f"Error in !stock command for category '{category}': {e}")
-        await ctx.send(f"An unexpected error occurred while processing the `!stock {category}` command: `{e}`")
+        embed = discord.Embed(
+            title="Error",
+            description=f"An unexpected error occurred while processing the `!stock {category}` command: `{e}`",
+            color=discord.Color.red(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000") # Footer for error embeds too
+        await ctx.send(embed=embed)
 
 @bot.command(name="autostock")
 @commands.has_permissions(manage_channels=True) # Requires "Manage Channels" permission to use
@@ -241,13 +295,13 @@ async def autostock_toggle(ctx, status: str = None):
     if status == "on":
         if AUTOSTOCK_ENABLED:
             if AUTOSTOCK_CHANNEL_ID != ctx.channel.id:
-                 # If it's enabled but user wants to change channel
-                 AUTOSTOCK_CHANNEL_ID = ctx.channel.id
-                 await ctx.send(f"Auto-stock was already enabled, but the update channel has been changed to this one (<#{AUTOSTOCK_CHANNEL_ID}>).")
-                 # Trigger an immediate check for the new channel
-                 await autostock_checker()
+                    # If it's enabled but user wants to change channel
+                    AUTOSTOCK_CHANNEL_ID = ctx.channel.id
+                    await ctx.send(f"Auto-stock was already enabled, but the update channel has been changed to this one (<#{AUTOSTOCK_CHANNEL_ID}>).")
+                    # Trigger an immediate check for the new channel
+                    await autostock_checker()
             else:
-                 await ctx.send("Auto-stock is already enabled in this channel.")
+                    await ctx.send("Auto-stock is already enabled in this channel.")
             return
 
         AUTOSTOCK_ENABLED = True
@@ -328,7 +382,7 @@ async def autostock_checker():
         else:
             print(f"Autostock: Configured channel with ID {AUTOSTOCK_CHANNEL_ID} not found or inaccessible. Disabling autostock.")
             AUTOSTOCK_ENABLED = False
-        
+            
         # Always update LAST_STOCK_DATA with the full, new data after comparison and potential notification
         LAST_STOCK_DATA = current_stock_data
 
@@ -355,7 +409,7 @@ async def restock_logs(ctx):
         color=discord.Color.blue(),
         timestamp=datetime.utcnow()
     )
-    embed.set_footer(text="GrowAGarden Bot")
+    embed.set_footer(text="made by summers 2000") # Footer for this embed
 
     # Display logs in reverse order (most recent first)
     for log in reversed(STOCK_LOGS):
@@ -387,7 +441,7 @@ async def ban_command(ctx, member: discord.Member, *, reason: str = "No reason p
     # Check if the target member has a higher or equal role than the commander
     if ctx.author.top_role <= member.top_role and ctx.author.id != ctx.guild.owner_id:
         await ctx.send("You cannot ban someone with an equal or higher role than yourself.")
-        return # Added missing return here
+        return
     # Check if the target member has a higher or equal role than the bot
     if ctx.guild.me.top_role <= member.top_role:
         await ctx.send("I cannot ban this user as their role is equal to or higher than my top role. Please adjust my role hierarchy.")
@@ -395,7 +449,14 @@ async def ban_command(ctx, member: discord.Member, *, reason: str = "No reason p
 
     try:
         await member.ban(reason=reason)
-        await ctx.send(f"Successfully banned **{member.display_name}** for: `{reason}`")
+        embed = discord.Embed(
+            title="Member Banned",
+            description=f"Successfully banned **{member.display_name}** for: `{reason}`",
+            color=discord.Color.red(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000") # Footer for this embed
+        await ctx.send(embed=embed)
     except discord.Forbidden:
         await ctx.send("I don't have sufficient permissions to ban this user. Make sure my role is higher than theirs and I have the 'Ban Members' permission.")
     except Exception as e:
@@ -424,7 +485,14 @@ async def kick_command(ctx, member: discord.Member, *, reason: str = "No reason 
 
     try:
         await member.kick(reason=reason)
-        await ctx.send(f"Successfully kicked **{member.display_name}** for: `{reason}`")
+        embed = discord.Embed(
+            title="Member Kicked",
+            description=f"Successfully kicked **{member.display_name}** for: `{reason}`",
+            color=discord.Color.orange(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000") # Footer for this embed
+        await ctx.send(embed=embed)
     except discord.Forbidden:
         await ctx.send("I don't have sufficient permissions to kick this user. Make sure my role is higher than theirs and I have the 'Kick Members' permission.")
     except Exception as e:
@@ -467,16 +535,32 @@ async def mute_command(ctx, member: discord.Member, duration_minutes: int = 0, *
 
     try:
         await member.add_roles(muted_role, reason=reason)
-        mute_message = f"Successfully muted **{member.display_name}** for: `{reason}`"
-        await ctx.send(mute_message)
+        mute_message_desc = f"Successfully muted **{member.display_name}** for: `{reason}`"
+        if duration_minutes > 0:
+            mute_message_desc += f"\nThis mute will last for `{duration_minutes}` minutes."
+            
+        embed = discord.Embed(
+            title="Member Muted",
+            description=mute_message_desc,
+            color=discord.Color.light_grey(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000") # Footer for this embed
+        await ctx.send(embed=embed)
 
         if duration_minutes > 0:
-            await ctx.send(f"This mute will last for `{duration_minutes}` minutes.")
             await asyncio.sleep(duration_minutes * 60)
             # After duration, check if user is still muted and unmute
             if muted_role in member.roles: # Ensure they weren't manually unmuted already
                 await member.remove_roles(muted_role, reason="Mute duration expired")
-                await ctx.send(f"Unmuted **{member.display_name}** (mute duration expired).")
+                unmute_embed = discord.Embed(
+                    title="Member Unmuted (Automatic)",
+                    description=f"Unmuted **{member.display_name}** (mute duration expired).",
+                    color=discord.Color.blue(),
+                    timestamp=datetime.utcnow()
+                )
+                unmute_embed.set_footer(text="made by summers 2000") # Footer for this embed
+                await ctx.send(embed=unmute_embed)
             else:
                 print(f"{member.display_name} was manually unmuted before duration expired.")
 
@@ -506,7 +590,14 @@ async def unmute_command(ctx, member: discord.Member):
 
     try:
         await member.remove_roles(muted_role, reason="Unmuted by moderator")
-        await ctx.send(f"Successfully unmuted **{member.display_name}**.")
+        embed = discord.Embed(
+            title="Member Unmuted",
+            description=f"Successfully unmuted **{member.display_name}**.",
+            color=discord.Color.blue(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000") # Footer for this embed
+        await ctx.send(embed=embed)
     except discord.Forbidden:
         await ctx.send("I don't have sufficient permissions to manage roles. Make sure my role is higher than the 'Muted' role.")
     except Exception as e:
@@ -526,10 +617,18 @@ async def slowmode_command(ctx, seconds: int):
 
     try:
         await ctx.channel.edit(slowmode_delay=seconds)
+        embed = discord.Embed(
+            title="Slowmode Update",
+            color=discord.Color.purple(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000") # Footer for this embed
+
         if seconds == 0:
-            await ctx.send("Slowmode has been **disabled** in this channel.")
+            embed.description = "Slowmode has been **disabled** in this channel."
         else:
-            await ctx.send(f"Slowmode set to `{seconds}` seconds in this channel.")
+            embed.description = f"Slowmode set to `{seconds}` seconds in this channel."
+        await ctx.send(embed=embed)
     except discord.Forbidden:
         await ctx.send("I don't have sufficient permissions to manage channels. Please ensure I have the 'Manage Channels' permission.")
     except Exception as e:
@@ -553,15 +652,24 @@ async def clear_messages(ctx, amount: int):
     try:
         # Add 1 to amount to delete the command message itself
         deleted = await ctx.channel.purge(limit=amount + 1)
+        
+        embed = discord.Embed(
+            title="Messages Cleared",
+            description=f"Successfully deleted `{len(deleted) - 1}` message(s).",
+            color=discord.Color.dark_teal(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000") # Footer for this embed
+        
         # Send a confirmation message that deletes itself after a few seconds
-        await ctx.send(f"Successfully deleted `{len(deleted) - 1}` message(s).", delete_after=5)
+        await ctx.send(embed=embed, delete_after=5)
     except discord.Forbidden:
         await ctx.send("I don't have sufficient permissions to manage messages in this channel. Please ensure I have 'Manage Messages' and 'Read Message History'.")
     except discord.HTTPException as e:
         if "messages older than 14 days" in str(e):
-             await ctx.send("I cannot delete messages older than 14 days using this command.")
+            await ctx.send("I cannot delete messages older than 14 days using this command.")
         else:
-             await ctx.send(f"An API error occurred while trying to clear messages: `{e}`")
+            await ctx.send(f"An API error occurred while trying to clear messages: `{e}`")
     except Exception as e:
         await ctx.send(f"An unexpected error occurred while trying to clear messages: `{e}`")
 
