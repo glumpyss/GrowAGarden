@@ -20,7 +20,7 @@ intents.presences = True        # Useful for member presence updates, if you exp
 bot = commands.Bot(command_prefix=("!", ":"), intents=intents)
 bot.remove_command('help') # This line removes the default help command
 
-# --- Global Variables for Autostock ---
+# --- Global Variables for Autostock and New Features ---
 AUTOSTOCK_ENABLED = False
 LAST_STOCK_DATA = None # Will store the full dictionary response
 STOCK_API_URL = "https://growagardenapi.vercel.app/api/stock/GetStock"
@@ -38,6 +38,41 @@ BOT_START_TIME = datetime.utcnow()
 # --- Game States ---
 active_c4_games = {} # {channel_id: Connect4Game instance}
 active_tictactoe_games = {} # {channel_id: TicTacToeGame instance}
+
+# --- DM Notification Specifics ---
+DM_NOTIFY_ROLE_ID = 1302076375922118696  # The specific role ID for DM notifications
+DM_NOTIFICATION_LOG_CHANNEL_ID = 1379734424895361054 # Channel to log stock changes for DM notifications
+DM_NOTIFIED_USERS = {} # {user_id: True/False (enabled/disabled)}
+DM_SEEDS_TO_MONITOR = ["Beanstalk Seed", "Pepper Seed", "Mushroom Seed"] # Exact names from API
+LAST_KNOWN_DM_SEEDS_STATUS = set() # Stores names of DM-monitored seeds that were in stock last check
+
+DM_USERS_FILE = 'dm_users.json' # File to persist DM_NOTIFIED_USERS
+
+# --- Helper Functions for DM Notification Persistence ---
+def load_dm_users():
+    """Loads DM notification user data from a JSON file."""
+    global DM_NOTIFIED_USERS
+    if os.path.exists(DM_USERS_FILE):
+        with open(DM_USERS_FILE, 'r') as f:
+            try:
+                data = json.load(f)
+                # Convert string keys back to int for user IDs
+                DM_NOTIFIED_USERS = {int(k): v for k, v in data.items()}
+                print(f"Loaded {len(DM_NOTIFIED_USERS)} DM notification users.")
+            except json.JSONDecodeError:
+                print(f"Error decoding {DM_USERS_FILE}. Starting with empty DM user list.")
+                DM_NOTIFIED_USERS = {}
+    else:
+        DM_NOTIFIED_USERS = {}
+        print(f"{DM_USERS_FILE} not found. Starting with empty DM user list.")
+
+def save_dm_users():
+    """Saves DM notification user data to a JSON file."""
+    with open(DM_USERS_FILE, 'w') as f:
+        # Convert int keys to string for JSON serialization
+        json.dump({str(k): v for k, v in DM_NOTIFIED_USERS.items()}, f, indent=4)
+    print(f"Saved {len(DM_NOTIFIED_USERS)} DM notification users.")
+
 
 # --- Helper Function for API Calls ---
 async def fetch_api_data(url):
@@ -124,6 +159,9 @@ async def on_ready():
     BOT_START_TIME = datetime.utcnow() # Record start time
     print(f"Bot logged in as {bot.user.name} (ID: {bot.user.id})")
     print("Bot is ready to receive commands!")
+    
+    load_dm_users() # Load DM notification users on startup
+
     # Start the autostock task when the bot is ready
     if not autostock_checker.is_running():
         autostock_checker.start()
@@ -318,75 +356,134 @@ async def autostock_toggle(ctx, status: str = None):
 @tasks.loop(minutes=5) # Checks every 5 minutes
 async def autostock_checker():
     """Background task to check for new stock updates."""
-    global AUTOSTOCK_ENABLED, LAST_STOCK_DATA, AUTOSTOCK_CHANNEL_ID, STOCK_LOGS
+    global AUTOSTOCK_ENABLED, LAST_STOCK_DATA, AUTOSTOCK_CHANNEL_ID, STOCK_LOGS, LAST_KNOWN_DM_SEEDS_STATUS
 
-    if not AUTOSTOCK_ENABLED or AUTOSTOCK_CHANNEL_ID is None:
-        return
+    # --- General Autostock Update ---
+    if AUTOSTOCK_ENABLED and AUTOSTOCK_CHANNEL_ID is not None:
+        current_stock_data = await fetch_api_data(STOCK_API_URL)
 
-    current_stock_data = await fetch_api_data(STOCK_API_URL)
-
-    if current_stock_data is None:
-        print("Autostock: Failed to fetch current stock data. Skipping update for this cycle.")
-        return
-
-    # Helper to normalize the ENTIRE stock data for comparison (order-independent comparison of all items)
-    def normalize_full_stock_data(data):
-        if not data:
-            return frozenset()
-
-        normalized_items = []
-        for category_key, items_list in data.items():
-            # Skip 'lastSeen' as it's metadata, not actual stock
-            if category_key == 'lastSeen':
-                continue
-            if isinstance(items_list, list):
-                for item in items_list:
-                    # Convert each item dict to a frozenset of its key-value pairs for hashability
-                    # Exclude 'image' and 'emoji' from comparison as they don't signify a stock change
-                    comparable_item = {k: v for k, v in item.items() if k not in ['image', 'emoji']}
-                    normalized_items.append(frozenset(comparable_item.items()))
-        return frozenset(normalized_items)
-
-    normalized_current = normalize_full_stock_data(current_stock_data)
-    normalized_last = normalize_full_stock_data(LAST_STOCK_DATA)
-
-    # Check if stock data has genuinely changed or if it's the first run
-    if LAST_STOCK_DATA is None or normalized_current != normalized_last:
-        channel = bot.get_channel(AUTOSTOCK_CHANNEL_ID)
-        if channel:
-            # Create a single embed for all relevant stock types
-            embed = create_stock_embed(current_stock_data, title="New Shop Stock Update!")
-            try:
-                await channel.send(embed=embed)
-                print(f"Autostock: New stock detected and sent to channel {channel.name} ({channel.id}).")
-
-                # Log the stock change (can be expanded to log more details)
-                stock_time = datetime.now()
-                # Get names for logging from a few categories
-                log_details = []
-                for cat_key in ['seedsStock', 'eggStock', 'gearStock', 'cosmeticsStock', 'honeyStock']:
-                    items = current_stock_data.get(cat_key, [])
-                    if items:
-                        item_names = [item.get('name', 'Unknown') for item in items]
-                        log_details.append(f"{cat_key.replace('Stock', '').capitalize()}: {', '.join(item_names)}")
-                
-                log_entry = " | ".join(log_details) if log_details else "No new stock items detected for log."
-                STOCK_LOGS.append({'time': stock_time, 'details': log_entry})
-
-                # Keep only the last 10 logs (or adjust as needed)
-                if len(STOCK_LOGS) > 10:
-                    STOCK_LOGS.pop(0) # Remove the oldest log
-
-            except discord.Forbidden:
-                print(f"Autostock: Bot does not have permission to send messages/embeds in channel {channel.name} ({channel.id}). Please check bot permissions!")
-            except Exception as e:
-                print(f"Autostock: An unexpected error occurred while sending embed: {e}")
+        if current_stock_data is None:
+            print("Autostock: Failed to fetch current stock data. Skipping update for this cycle.")
+            # Don't return here, as DM notifications might still work if API was only temporarily down
         else:
-            print(f"Autostock: Configured channel with ID {AUTOSTOCK_CHANNEL_ID} not found or inaccessible. Disabling autostock.")
-            AUTOSTOCK_ENABLED = False
+            # Helper to normalize the ENTIRE stock data for comparison (order-independent comparison of all items)
+            def normalize_full_stock_data(data):
+                if not data:
+                    return frozenset()
 
-        # Always update LAST_STOCK_DATA with the full, new data after comparison and potential notification
-        LAST_STOCK_DATA = current_stock_data
+                normalized_items = []
+                for category_key, items_list in data.items():
+                    # Skip 'lastSeen' as it's metadata, not actual stock
+                    if category_key == 'lastSeen':
+                        continue
+                    if isinstance(items_list, list):
+                        for item in items_list:
+                            # Convert each item dict to a frozenset of its key-value pairs for hashability
+                            # Exclude 'image' and 'emoji' from comparison as they don't signify a stock change
+                            comparable_item = {k: v for k, v in item.items() if k not in ['image', 'emoji']}
+                            normalized_items.append(frozenset(comparable_item.items()))
+                return frozenset(normalized_items)
+
+            normalized_current = normalize_full_stock_data(current_stock_data)
+            normalized_last = normalize_full_stock_data(LAST_STOCK_DATA)
+
+            # Check if stock data has genuinely changed or if it's the first run
+            if LAST_STOCK_DATA is None or normalized_current != normalized_last:
+                channel = bot.get_channel(AUTOSTOCK_CHANNEL_ID)
+                if channel:
+                    # Create a single embed for all relevant stock types
+                    embed = create_stock_embed(current_stock_data, title="New Shop Stock Update!")
+                    try:
+                        await channel.send(embed=embed)
+                        print(f"Autostock: New stock detected and sent to channel {channel.name} ({channel.id}).")
+
+                        # Log the stock change (can be expanded to log more details)
+                        stock_time = datetime.now()
+                        # Get names for logging from a few categories
+                        log_details = []
+                        for cat_key in ['seedsStock', 'eggStock', 'gearStock', 'cosmeticsStock', 'honeyStock']:
+                            items = current_stock_data.get(cat_key, [])
+                            if items:
+                                item_names = [item.get('name', 'Unknown') for item in items]
+                                log_details.append(f"{cat_key.replace('Stock', '').capitalize()}: {', '.join(item_names)}")
+                        
+                        log_entry = " | ".join(log_details) if log_details else "No new stock items detected for log."
+                        STOCK_LOGS.append({'time': stock_time, 'details': log_entry})
+
+                        # Keep only the last 10 logs (or adjust as needed)
+                        if len(STOCK_LOGS) > 10:
+                            STOCK_LOGS.pop(0) # Remove the oldest log
+
+                    except discord.Forbidden:
+                        print(f"Autostock: Bot does not have permission to send messages/embeds in channel {channel.name} ({channel.id}). Please check bot permissions!")
+                    except Exception as e:
+                        print(f"Autostock: An unexpected error occurred while sending embed: {e}")
+                else:
+                    print(f"Autostock: Configured channel with ID {AUTOSTOCK_CHANNEL_ID} not found or inaccessible. Disabling autostock.")
+                    AUTOSTOCK_ENABLED = False
+
+                # Always update LAST_STOCK_DATA with the full, new data after comparison and potential notification
+                LAST_STOCK_DATA = current_stock_data
+
+    # --- DM Notification Specific Logic ---
+    if current_stock_data: # Only proceed if we successfully fetched stock data
+        seeds_stock = current_stock_data.get('seedsStock', [])
+        currently_available_dm_seeds = {
+            item['name'] for item in seeds_stock
+            if item['name'] in DM_SEEDS_TO_MONITOR and item.get('value', 0) > 0
+        }
+
+        newly_in_stock_for_dm = currently_available_dm_seeds - LAST_KNOWN_DM_SEEDS_STATUS
+
+        if newly_in_stock_for_dm:
+            log_channel = bot.get_channel(DM_NOTIFICATION_LOG_CHANNEL_ID)
+            if log_channel:
+                log_message = f"**{datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')} - New DM-Monitored Seeds In Stock:**\n"
+                for seed_name in newly_in_stock_for_dm:
+                    log_message += f"- `{seed_name}` is now in stock!\n"
+                try:
+                    await log_channel.send(log_message)
+                    print(f"Logged new DM-monitored seeds to channel {log_channel.name} ({log_channel.id}).")
+                except discord.Forbidden:
+                    print(f"Bot does not have permission to send messages in DM notification log channel {log_channel.id}.")
+                except Exception as e:
+                    print(f"Error sending log to DM notification channel: {e}")
+
+            dm_embed = discord.Embed(
+                title="GrowAGarden Stock Alert!",
+                description="The following seeds you're monitoring are now in stock:",
+                color=discord.Color.orange(),
+                timestamp=datetime.utcnow()
+            )
+            dm_embed.set_footer(text="made by summers 2000")
+
+            for seed_name in newly_in_stock_for_dm:
+                dm_embed.add_field(name=f"✅ {seed_name}", value="Available now!", inline=False)
+
+            for user_id, enabled in DM_NOTIFIED_USERS.items():
+                if enabled:
+                    user = bot.get_user(user_id) # Try to get from cache first
+                    if user is None:
+                        try: # If not in cache, try to fetch
+                            user = await bot.fetch_user(user_id)
+                        except discord.NotFound:
+                            print(f"DM User {user_id} not found. Skipping DM.")
+                            continue
+                        except Exception as e:
+                            print(f"Error fetching DM user {user_id}: {e}. Skipping DM.")
+                            continue
+
+                    if user:
+                        try:
+                            await user.send(embed=dm_embed)
+                            print(f"Sent DM notification to {user.name} ({user.id}) for new seeds.")
+                        except discord.Forbidden:
+                            print(f"Could not send DM to {user.name} ({user.id}). User has DMs disabled or blocked bot.")
+                        except Exception as e:
+                            print(f"An unexpected error occurred while sending DM to {user.name} ({user.id}): {e}")
+
+        # Update the last known status for DM-monitored seeds
+        LAST_KNOWN_DM_SEEDS_STATUS = currently_available_dm_seeds
 
 
 @autostock_checker.before_loop
@@ -885,8 +982,59 @@ async def help_command(ctx):
     )
     embed.add_field(name="__Game Commands__", value=game_commands_desc, inline=False)
 
+    # --- DM Notification Commands ---
+    dm_notify_commands_desc = (
+        f"`!seedstockdm`: Toggles DM notifications for Beanstalk, Pepper, and Mushroom seeds. (Role ID: `{DM_NOTIFY_ROLE_ID}` required)"
+    )
+    embed.add_field(name="__DM Notification Commands__", value=dm_notify_commands_desc, inline=False)
+
 
     await ctx.send(embed=embed)
+
+# --- DM Notification Command ---
+@bot.command(name="seedstockdm")
+@commands.guild_only()
+async def seed_stock_dm_toggle(ctx):
+    """
+    Toggles DM notifications for Beanstalk, Pepper, and Mushroom seeds.
+    Only works for users with a specific role ID.
+    Usage: !seedstockdm
+    """
+    # Check if the user has the required role
+    required_role = discord.utils.get(ctx.guild.roles, id=DM_NOTIFY_ROLE_ID)
+    if not required_role or required_role not in ctx.author.roles:
+        embed = discord.Embed(
+            title="Permission Denied",
+            description=f"You need the role with ID `{DM_NOTIFY_ROLE_ID}` to use this command.",
+            color=discord.Color.red(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000")
+        await ctx.send(embed=embed, delete_after=10)
+        return
+
+    user_id_str = str(ctx.author.id) # Use string for dictionary key if saving to JSON
+
+    if DM_NOTIFIED_USERS.get(ctx.author.id, False):
+        DM_NOTIFIED_USERS[ctx.author.id] = False
+        status_message = "disabled"
+        color = discord.Color.red()
+    else:
+        DM_NOTIFIED_USERS[ctx.author.id] = True
+        status_message = "enabled"
+        color = discord.Color.green()
+
+    save_dm_users() # Save the updated state
+
+    embed = discord.Embed(
+        title="DM Notification Status",
+        description=f"Your DM notifications for Beanstalk, Pepper, and Mushroom seeds have been **{status_message}**.",
+        color=color,
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+    await ctx.send(embed=embed)
+    await ctx.author.send(f"Your GrowAGarden seed stock DM notifications are now **{status_message}**.")
 
 
 # --- Connect4 Game Implementation ---
