@@ -18,6 +18,7 @@ intents.message_content = True  # Required for reading command messages (e.g., !
 intents.presences = True        # Useful for member presence updates, if you expand functionality
 
 bot = commands.Bot(command_prefix=("!", ":"), intents=intents)
+bot.remove_command('help') # This line removes the default help command
 
 # --- Global Variables for Autostock ---
 AUTOSTOCK_ENABLED = False
@@ -91,7 +92,7 @@ def create_stock_embed(data, title="Current Stock Information"):
         item_emoji = item.get('emoji', '')
 
         field_value = f"Quantity: {item_quantity}"
-        
+
         # Only set thumbnail once for the first item to avoid overwriting
         if item_image and isinstance(item_image, str) and not embed.thumbnail:
             embed.set_thumbnail(url=item_image)
@@ -193,7 +194,7 @@ async def get_all_stock(ctx):
                     item_quantity = item.get('value', 'N/A')
                     item_emoji = item.get('emoji', '')
                     field_value += f"{item_emoji} {item_name}: **{item_quantity}**\n"
-                
+
                 if len(category_data) > 5:
                     field_value += f"...and {len(category_data) - 5} more."
 
@@ -202,7 +203,7 @@ async def get_all_stock(ctx):
                     value=field_value if field_value else "No items in this category.",
                     inline=True
                 )
-            
+
         if not found_any_stock:
             embed.description = "No stock information available across any categories at this time."
 
@@ -257,7 +258,7 @@ async def get_stock_by_category(ctx, category: str = None):
 
         # Access the specific stock list using the mapped key
         filtered_stock_data = all_stock_data.get(api_category_key, [])
-        
+
         if not filtered_stock_data:
             await ctx.send(f"Currently, there are no `{category}` stock items available.")
             return
@@ -337,7 +338,7 @@ async def autostock_checker():
     def normalize_full_stock_data(data):
         if not data:
             return frozenset()
-        
+
         normalized_items = []
         for category_key, items_list in data.items():
             # Skip 'lastSeen' as it's metadata, not actual stock
@@ -382,7 +383,7 @@ async def autostock_checker():
         else:
             print(f"Autostock: Configured channel with ID {AUTOSTOCK_CHANNEL_ID} not found or inaccessible. Disabling autostock.")
             AUTOSTOCK_ENABLED = False
-            
+
         # Always update LAST_STOCK_DATA with the full, new data after comparison and potential notification
         LAST_STOCK_DATA = current_stock_data
 
@@ -538,7 +539,7 @@ async def mute_command(ctx, member: discord.Member, duration_minutes: int = 0, *
         mute_message_desc = f"Successfully muted **{member.display_name}** for: `{reason}`"
         if duration_minutes > 0:
             mute_message_desc += f"\nThis mute will last for `{duration_minutes}` minutes."
-            
+
         embed = discord.Embed(
             title="Member Muted",
             description=mute_message_desc,
@@ -652,7 +653,7 @@ async def clear_messages(ctx, amount: int):
     try:
         # Add 1 to amount to delete the command message itself
         deleted = await ctx.channel.purge(limit=amount + 1)
-        
+
         embed = discord.Embed(
             title="Messages Cleared",
             description=f"Successfully deleted `{len(deleted) - 1}` message(s).",
@@ -660,7 +661,7 @@ async def clear_messages(ctx, amount: int):
             timestamp=datetime.utcnow()
         )
         embed.set_footer(text="made by summers 2000") # Footer for this embed
-        
+
         # Send a confirmation message that deletes itself after a few seconds
         await ctx.send(embed=embed, delete_after=5)
     except discord.Forbidden:
@@ -674,11 +675,11 @@ async def clear_messages(ctx, amount: int):
         await ctx.send(f"An unexpected error occurred while trying to clear messages: `{e}`")
 
 
-@bot.command(name="help", aliases=["commands"])
+@bot.command(name="cmds", aliases=["commands", "help"])
 async def help_command(ctx):
     """
     Displays a list of all available commands.
-    Usage: !help
+    Usage: !cmds
     """
     embed = discord.Embed(
         title="GrowAGarden Bot Commands",
