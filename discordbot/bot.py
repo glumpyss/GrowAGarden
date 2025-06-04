@@ -43,8 +43,14 @@ active_tictactoe_games = {} # {channel_id: TicTacToeGame instance}
 DM_NOTIFY_ROLE_ID = 1302076375922118696  # The specific role ID for DM notifications
 DM_NOTIFICATION_LOG_CHANNEL_ID = 1379734424895361054 # Channel to log stock changes for DM notifications
 DM_NOTIFIED_USERS = {} # {user_id: True/False (enabled/disabled)}
-DM_SEEDS_TO_MONITOR = ["Beanstalk Seed", "Pepper Seed", "Mushroom Seed"] # Exact names from API
-LAST_KNOWN_DM_SEEDS_STATUS = set() # Stores names of DM-monitored seeds that were in stock last check
+
+# Define which items to monitor for DM notifications, by category
+DM_MONITORED_CATEGORIES = {
+    "seedsStock": ["Beanstalk Seed", "Pepper Seed", "Mushroom Seed"],
+    "gearStock": ["Watering Can", "Shovel", "Axe"] # Example gear items to monitor
+}
+# Stores the last known status of monitored items for DM notifications, per category
+LAST_KNOWN_DM_ITEM_STATUS = {category: set() for category in DM_MONITORED_CATEGORIES.keys()}
 
 DM_USERS_FILE = 'dm_users.json' # File to persist DM_NOTIFIED_USERS
 
@@ -377,7 +383,7 @@ async def autostock_toggle(ctx, status: str = None):
 @tasks.loop(minutes=5) # Checks every 5 minutes
 async def autostock_checker():
     """Background task to check for new stock updates."""
-    global AUTOSTOCK_ENABLED, LAST_STOCK_DATA, AUTOSTOCK_CHANNEL_ID, STOCK_LOGS, LAST_KNOWN_DM_SEEDS_STATUS
+    global AUTOSTOCK_ENABLED, LAST_STOCK_DATA, AUTOSTOCK_CHANNEL_ID, STOCK_LOGS, LAST_KNOWN_DM_ITEM_STATUS
 
     # --- General Autostock Update ---
     if AUTOSTOCK_ENABLED and AUTOSTOCK_CHANNEL_ID is not None:
@@ -448,63 +454,65 @@ async def autostock_checker():
 
     # --- DM Notification Specific Logic ---
     if current_stock_data: # Only proceed if we successfully fetched stock data
-        seeds_stock = current_stock_data.get('seedsStock', [])
-        currently_available_dm_seeds = {
-            item['name'] for item in seeds_stock
-            if item['name'] in DM_SEEDS_TO_MONITOR and item.get('value', 0) > 0
-        }
+        for category_key, monitored_items_list in DM_MONITORED_CATEGORIES.items():
+            category_stock = current_stock_data.get(category_key, [])
+            
+            currently_available_dm_items = {
+                item['name'] for item in category_stock
+                if item['name'] in monitored_items_list and item.get('value', 0) > 0
+            }
 
-        newly_in_stock_for_dm = currently_available_dm_seeds - LAST_KNOWN_DM_SEEDS_STATUS
+            newly_in_stock_for_dm = currently_available_dm_items - LAST_KNOWN_DM_ITEM_STATUS[category_key]
 
-        if newly_in_stock_for_dm:
-            log_channel = bot.get_channel(DM_NOTIFICATION_LOG_CHANNEL_ID)
-            if log_channel:
-                log_message = f"**{datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')} - New DM-Monitored Seeds In Stock:**\n"
-                for seed_name in newly_in_stock_for_dm:
-                    log_message += f"- `{seed_name}` is now in stock!\n"
-                try:
-                    await log_channel.send(log_message)
-                    print(f"Logged new DM-monitored seeds to channel {log_channel.name} ({log_channel.id}).")
-                except discord.Forbidden:
-                    print(f"Bot does not have permission to send messages in DM notification log channel {log_channel.id}.")
-                except Exception as e:
-                    print(f"Error sending log to DM notification channel: {e}")
+            if newly_in_stock_for_dm:
+                log_channel = bot.get_channel(DM_NOTIFICATION_LOG_CHANNEL_ID)
+                if log_channel:
+                    log_message = f"**{datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')} - New DM-Monitored {category_key.replace('Stock', '').capitalize()} In Stock:**\n"
+                    for item_name in newly_in_stock_for_dm:
+                        log_message += f"- `{item_name}` is now in stock!\n"
+                    try:
+                        await log_channel.send(log_message)
+                        print(f"Logged new DM-monitored items to channel {log_channel.name} ({log_channel.id}).")
+                    except discord.Forbidden:
+                        print(f"Bot does not have permission to send messages in DM notification log channel {log_channel.id}.")
+                    except Exception as e:
+                        print(f"Error sending log to DM notification channel: {e}")
 
-            dm_embed = discord.Embed(
-                title="GrowAGarden Stock Alert!",
-                description="The following seeds you're monitoring are now in stock:",
-                color=discord.Color.orange(),
-                timestamp=datetime.utcnow()
-            )
-            dm_embed.set_footer(text="made by summers 2000")
+                dm_embed = discord.Embed(
+                    title=f"GrowAGarden Stock Alert! ({category_key.replace('Stock', '').capitalize()})",
+                    description=f"The following {category_key.replace('Stock', '').lower()} you're monitoring are now in stock:",
+                    color=discord.Color.orange(),
+                    timestamp=datetime.utcnow()
+                )
+                dm_embed.set_footer(text="made by summers 2000")
 
-            for seed_name in newly_in_stock_for_dm:
-                dm_embed.add_field(name=f"✅ {seed_name}", value="Available now!", inline=False)
+                for item_name in newly_in_stock_for_dm:
+                    dm_embed.add_field(name=f"✅ {item_name}", value="Available now!", inline=False)
 
-            for user_id, enabled in DM_NOTIFIED_USERS.items():
-                if enabled:
-                    user = bot.get_user(user_id) # Try to get from cache first
-                    if user is None:
-                        try: # If not in cache, try to fetch
-                            user = await bot.fetch_user(user_id)
-                        except discord.NotFound:
-                            print(f"DM User {user_id} not found. Skipping DM.")
-                            continue
-                        except Exception as e:
-                            print(f"Error fetching DM user {user_id}: {e}. Skipping DM.")
-                            continue
+                for user_id, enabled in DM_NOTIFIED_USERS.items():
+                    if enabled:
+                        user = bot.get_user(user_id)
+                        if user is None:
+                            try:
+                                user = await bot.fetch_user(user_id)
+                            except discord.NotFound:
+                                print(f"DM User {user_id} not found. Skipping DM.")
+                                continue
+                            except Exception as e:
+                                print(f"Error fetching DM user {user_id}: {e}. Skipping DM.")
+                                continue
 
-                    if user:
-                        try:
-                            await user.send(embed=dm_embed)
-                            print(f"Sent DM notification to {user.name} ({user.id}) for new seeds.")
-                        except discord.Forbidden:
-                            print(f"Could not send DM to {user.name} ({user.id}). User has DMs disabled or blocked bot.")
-                        except Exception as e:
-                            print(f"An unexpected error occurred while sending DM to {user.name} ({user.id}): {e}")
+                        if user:
+                            try:
+                                await user.send(embed=dm_embed)
+                                print(f"Sent DM notification to {user.name} ({user.id}) for new {category_key.replace('Stock', '').lower()}.")
+                            except discord.Forbidden:
+                                print(f"Could not send DM to {user.name} ({user.id}). User has DMs disabled or blocked bot.")
+                            except Exception as e:
+                                print(f"An unexpected error occurred while sending DM to {user.name} ({user.id}): {e}")
 
-        # Update the last known status for DM-monitored seeds
-        LAST_KNOWN_DM_SEEDS_STATUS = currently_available_dm_seeds
+            # Update the last known status for this category
+            LAST_KNOWN_DM_ITEM_STATUS[category_key] = currently_available_dm_items
 
 
 @autostock_checker.before_loop
@@ -1006,14 +1014,15 @@ async def help_command(ctx):
 
     # --- DM Notification Commands ---
     dm_notify_commands_desc = (
-        f"`!seedstockdm`: Toggles DM notifications for Beanstalk, Pepper, and Mushroom seeds. (Role ID: `{DM_NOTIFY_ROLE_ID}` required)"
+        f"`!seedstockdm`: Toggles DM notifications for Beanstalk, Pepper, and Mushroom seeds. (Role ID: `{DM_NOTIFY_ROLE_ID}` required)\n"
+        f"`!gearstockdm`: Toggles DM notifications for monitored gear items. (Role ID: `{DM_NOTIFY_ROLE_ID}` required)"
     )
     embed.add_field(name="__DM Notification Commands__", value=dm_notify_commands_desc, inline=False)
 
 
     await ctx.send(embed=embed)
 
-# --- DM Notification Command ---
+# --- DM Notification Command for Seeds ---
 @bot.command(name="seedstockdm")
 @commands.guild_only()
 async def seed_stock_dm_toggle(ctx):
@@ -1035,7 +1044,12 @@ async def seed_stock_dm_toggle(ctx):
         await ctx.send(embed=embed, delete_after=10)
         return
 
-    user_id_str = str(ctx.author.id) # Use string for dictionary key if saving to JSON
+    # DM_NOTIFIED_USERS stores a boolean for each user, indicating if ANY DM notification is enabled.
+    # The specific items they monitor are defined in DM_MONITORED_CATEGORIES.
+    # For now, this toggle will simply enable/disable ALL DM notifications for the user.
+    # If more granular control is needed (e.g., enable seeds but disable gear for a user),
+    # DM_NOTIFIED_USERS would need to store a dictionary of preferences per user.
+    # For this request, I'll keep the current simple toggle logic for the user.
 
     if DM_NOTIFIED_USERS.get(ctx.author.id, False):
         DM_NOTIFIED_USERS[ctx.author.id] = False
@@ -1050,13 +1064,61 @@ async def seed_stock_dm_toggle(ctx):
 
     embed = discord.Embed(
         title="DM Notification Status",
-        description=f"Your DM notifications for Beanstalk, Pepper, and Mushroom seeds have been **{status_message}**.",
+        description=f"Your DM notifications for monitored seeds and gear have been **{status_message}**.",
         color=color,
         timestamp=datetime.utcnow()
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
-    await ctx.author.send(f"Your GrowAGarden seed stock DM notifications are now **{status_message}**.")
+    await ctx.author.send(f"Your GrowAGarden stock DM notifications are now **{status_message}**.")
+
+# --- DM Notification Command for Gear ---
+@bot.command(name="gearstockdm")
+@commands.guild_only()
+async def gear_stock_dm_toggle(ctx):
+    """
+    Toggles DM notifications for specific gear items.
+    Only works for users with a specific role ID.
+    Usage: !gearstockdm
+    """
+    # Check if the user has the required role
+    required_role = discord.utils.get(ctx.guild.roles, id=DM_NOTIFY_ROLE_ID)
+    if not required_role or required_role not in ctx.author.roles:
+        embed = discord.Embed(
+            title="Permission Denied",
+            description=f"You need the role with ID `{DM_NOTIFY_ROLE_ID}` to use this command.",
+            color=discord.Color.red(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000")
+        await ctx.send(embed=embed, delete_after=10)
+        return
+
+    # This command uses the same global DM_NOTIFIED_USERS toggle.
+    # If more granular control is needed (e.g., enable seeds but disable gear for a user),
+    # DM_NOTIFIED_USERS would need to store a dictionary of preferences per user.
+    # For this request, I'll keep the current simple toggle logic for the user.
+
+    if DM_NOTIFIED_USERS.get(ctx.author.id, False):
+        DM_NOTIFIED_USERS[ctx.author.id] = False
+        status_message = "disabled"
+        color = discord.Color.red()
+    else:
+        DM_NOTIFIED_USERS[ctx.author.id] = True
+        status_message = "enabled"
+        color = discord.Color.green()
+
+    save_dm_users() # Save the updated state
+
+    embed = discord.Embed(
+        title="DM Notification Status",
+        description=f"Your DM notifications for monitored seeds and gear have been **{status_message}**.",
+        color=color,
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+    await ctx.send(embed=embed)
+    await ctx.author.send(f"Your GrowAGarden stock DM notifications are now **{status_message}**.")
 
 
 # --- Roblox Username Lookup Command ---
