@@ -12,9 +12,9 @@ from datetime import datetime, timedelta
 # 2. SERVER MEMBERS INTENT
 # 3. MESSAGE CONTENT INTENT
 intents = discord.Intents.default()
-intents.members = True          # Required for moderation commands (ban, kick, mute, unmute)
-intents.message_content = True  # Required for reading command messages (e.g., !stock, !clear)
-intents.presences = True        # Useful for member presence updates, if you expand functionality
+intents.members = True           # Required for moderation commands (ban, kick, mute, unmute)
+intents.message_content = True   # Required for reading command messages (e.g., !stock, !clear)
+intents.presences = True         # Useful for member presence updates, if you expand functionality
 
 bot = commands.Bot(command_prefix=("!", ":"), intents=intents)
 
