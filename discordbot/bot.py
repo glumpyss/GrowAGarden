@@ -12,9 +12,9 @@ from datetime import datetime, timedelta
 # 2. SERVER MEMBERS INTENT
 # 3. MESSAGE CONTENT INTENT
 intents = discord.Intents.default()
-intents.members = True           # Required for moderation commands (ban, kick, mute, unmute)
-intents.message_content = True   # Required for reading command messages (e.g., !stock, !clear)
-intents.presences = True         # Useful for member presence updates, if you expand functionality
+intents.members = True          # Required for moderation commands (ban, kick, mute, unmute)
+intents.message_content = True  # Required for reading command messages (e.g., !stock, !clear)
+intents.presences = True        # Useful for member presence updates, if you expand functionality
 
 bot = commands.Bot(command_prefix=("!", ":"), intents=intents)
 
@@ -230,7 +230,7 @@ async def autostock_toggle(ctx, status: str = None):
 @tasks.loop(minutes=5) # Checks every 5 minutes
 async def autostock_checker():
     """Background task to check for new stock updates."""
-    # Moved global declaration to the very top to fix the SyntaxError
+    # This global declaration must be the first thing in the function if you plan to modify these variables
     global AUTOSTOCK_ENABLED, LAST_STOCK_DATA, AUTOSTOCK_CHANNEL_ID, STOCK_LOGS
 
     if not AUTOSTOCK_ENABLED or AUTOSTOCK_CHANNEL_ID is None:
@@ -278,8 +278,7 @@ async def autostock_checker():
                 print(f"Autostock: An unexpected error occurred while sending embed: {e}")
         else:
             print(f"Autostock: Configured channel with ID {AUTOSTOCK_CHANNEL_ID} not found or inaccessible. Disabling autostock.")
-            # Optionally, disable autostock if the channel is no longer found
-            global AUTOSTOCK_ENABLED # Need global here too if modifying within this block
+            # No need for 'global AUTOSTOCK_ENABLED' here, as it's already declared at the top of the function
             AUTOSTOCK_ENABLED = False
 
 
