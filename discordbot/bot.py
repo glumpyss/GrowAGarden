@@ -43,12 +43,16 @@ active_tictactoe_games = {} # {channel_id: TicTacToeGame instance}
 DM_NOTIFY_ROLE_ID = 1302076375922118696  # The specific role ID for DM notifications
 DM_BYPASS_ROLE_ID = 1379754489724145684 # New role ID that can bypass DM notification command requirements
 DM_NOTIFICATION_LOG_CHANNEL_ID = 1379734424895361054 # Channel to log stock changes for DM notifications
-DM_NOTIFIED_USERS = {} # {user_id: True/False (enabled/disabled)}
+
+# DM_NOTIFIED_USERS now stores a dictionary of preferences per user:
+# {user_id: {"seeds": True/False, "gear": True/False}}
+DM_NOTIFIED_USERS = {}
 
 # Define which items to monitor for DM notifications, by category
+# Each entry now includes a 'type' key for internal tracking and display in DMs
 DM_MONITORED_CATEGORIES = {
-    "seedsStock": ["Beanstalk Seed", "Pepper Seed", "Mushroom Seed"],
-    "gearStock": ["Watering Can", "Shovel", "Axe"] # Example gear items to monitor
+    "seedsStock": {"type": "seeds", "items": ["Beanstalk Seed", "Pepper Seed", "Mushroom Seed"]},
+    "gearStock": {"type": "gear", "items": ["Master Sprinkler", "Lightning Rod"]}
 }
 # Stores the last known status of monitored items for DM notifications, per category
 LAST_KNOWN_DM_ITEM_STATUS = {category: set() for category in DM_MONITORED_CATEGORIES.keys()}
@@ -64,7 +68,15 @@ def load_dm_users():
             try:
                 data = json.load(f)
                 # Convert string keys back to int for user IDs
-                DM_NOTIFIED_USERS = {int(k): v for k, v in data.items()}
+                loaded_users = {}
+                for k, v in data.items():
+                    user_id = int(k)
+                    # Ensure each user has default preferences for all types
+                    loaded_users[user_id] = {
+                        "seeds": v.get("seeds", False),
+                        "gear": v.get("gear", False)
+                    }
+                DM_NOTIFIED_USERS = loaded_users
                 print(f"Loaded {len(DM_NOTIFIED_USERS)} DM notification users.")
             except json.JSONDecodeError:
                 print(f"Error decoding {DM_USERS_FILE}. Starting with empty DM user list.")
@@ -384,39 +396,39 @@ async def autostock_toggle(ctx, status: str = None):
 @tasks.loop(minutes=5) # Checks every 5 minutes
 async def autostock_checker():
     """Background task to check for new stock updates."""
-    global AUTOSTOCK_ENABLED, LAST_STOCK_DATA, AUTOSTOCK_CHANNEL_ID, STOCK_LOGS, LAST_KNOWN_DM_ITEM_STATUS
+    global AUTOSTOCK_ENABLED, LAST_STOCK_DATA, AUTOSTOCK_CHANNEL_ID, STOCK_LOGS, LAST_KNOWN_DM_ITEM_STATUS, DM_NOTIFIED_USERS
 
     # --- General Autostock Update ---
-    if AUTOSTOCK_ENABLED and AUTOSTOCK_CHANNEL_ID is not None:
-        current_stock_data = await fetch_api_data(STOCK_API_URL)
+    current_stock_data = await fetch_api_data(STOCK_API_URL)
 
-        if current_stock_data is None:
-            print("Autostock: Failed to fetch current stock data. Skipping update for this cycle.")
-            # Don't return here, as DM notifications might still work if API was only temporarily down
-        else:
-            # Helper to normalize the ENTIRE stock data for comparison (order-independent comparison of all items)
-            def normalize_full_stock_data(data):
-                if not data:
-                    return frozenset()
+    if current_stock_data is None:
+        print("Autostock: Failed to fetch current stock data. Skipping update for this cycle.")
+        # Don't return here, as DM notifications might still work if API was only temporarily down
+    else:
+        # Helper to normalize the ENTIRE stock data for comparison (order-independent comparison of all items)
+        def normalize_full_stock_data(data):
+            if not data:
+                return frozenset()
 
-                normalized_items = []
-                for category_key, items_list in data.items():
-                    # Skip 'lastSeen' as it's metadata, not actual stock
-                    if category_key == 'lastSeen':
-                        continue
-                    if isinstance(items_list, list):
-                        for item in items_list:
-                            # Convert each item dict to a frozenset of its key-value pairs for hashability
-                            # Exclude 'image' and 'emoji' from comparison as they don't signify a stock change
-                            comparable_item = {k: v for k, v in item.items() if k not in ['image', 'emoji']}
-                            normalized_items.append(frozenset(comparable_item.items()))
-                return frozenset(normalized_items)
+            normalized_items = []
+            for category_key, items_list in data.items():
+                # Skip 'lastSeen' as it's metadata, not actual stock
+                if category_key == 'lastSeen':
+                    continue
+                if isinstance(items_list, list):
+                    for item in items_list:
+                        # Convert each item dict to a frozenset of its key-value pairs for hashability
+                        # Exclude 'image' and 'emoji' from comparison as they don't signify a stock change
+                        comparable_item = {k: v for k, v in item.items() if k not in ['image', 'emoji']}
+                        normalized_items.append(frozenset(comparable_item.items()))
+            return frozenset(normalized_items)
 
-            normalized_current = normalize_full_stock_data(current_stock_data)
-            normalized_last = normalize_full_stock_data(LAST_STOCK_DATA)
+        normalized_current = normalize_full_stock_data(current_stock_data)
+        normalized_last = normalize_full_stock_data(LAST_STOCK_DATA)
 
-            # Check if stock data has genuinely changed or if it's the first run
-            if LAST_STOCK_DATA is None or normalized_current != normalized_last:
+        # Check if stock data has genuinely changed or if it's the first run
+        if LAST_STOCK_DATA is None or normalized_current != normalized_last:
+            if AUTOSTOCK_ENABLED and AUTOSTOCK_CHANNEL_ID is not None:
                 channel = bot.get_channel(AUTOSTOCK_CHANNEL_ID)
                 if channel:
                     # Create a single embed for all relevant stock types
@@ -450,25 +462,27 @@ async def autostock_checker():
                     print(f"Autostock: Configured channel with ID {AUTOSTOCK_CHANNEL_ID} not found or inaccessible. Disabling autostock.")
                     AUTOSTOCK_ENABLED = False
 
-                # Always update LAST_STOCK_DATA with the full, new data after comparison and potential notification
-                LAST_STOCK_DATA = current_stock_data
+            # Always update LAST_STOCK_DATA with the full, new data after comparison and potential notification
+            LAST_STOCK_DATA = current_stock_data
 
-    # --- DM Notification Specific Logic ---
-    if current_stock_data: # Only proceed if we successfully fetched stock data
-        for category_key, monitored_items_list in DM_MONITORED_CATEGORIES.items():
-            category_stock = current_stock_data.get(category_key, [])
+        # --- DM Notification Specific Logic (runs regardless of main autostock status) ---
+        for api_category_key, monitor_info in DM_MONITORED_CATEGORIES.items():
+            dm_type = monitor_info["type"]
+            monitored_items_list = monitor_info["items"]
+
+            category_stock = current_stock_data.get(api_category_key, [])
             
             currently_available_dm_items = {
                 item['name'] for item in category_stock
                 if item['name'] in monitored_items_list and item.get('value', 0) > 0
             }
 
-            newly_in_stock_for_dm = currently_available_dm_items - LAST_KNOWN_DM_ITEM_STATUS[category_key]
+            newly_in_stock_for_dm = currently_available_dm_items - LAST_KNOWN_DM_ITEM_STATUS[api_category_key]
 
             if newly_in_stock_for_dm:
                 log_channel = bot.get_channel(DM_NOTIFICATION_LOG_CHANNEL_ID)
                 if log_channel:
-                    log_message = f"**{datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')} - New DM-Monitored {category_key.replace('Stock', '').capitalize()} In Stock:**\n"
+                    log_message = f"**{datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')} - New DM-Monitored {dm_type.capitalize()} In Stock:**\n"
                     for item_name in newly_in_stock_for_dm:
                         log_message += f"- `{item_name}` is now in stock!\n"
                     try:
@@ -480,8 +494,8 @@ async def autostock_checker():
                         print(f"Error sending log to DM notification channel: {e}")
 
                 dm_embed = discord.Embed(
-                    title=f"GrowAGarden Stock Alert! ({category_key.replace('Stock', '').capitalize()})",
-                    description=f"The following {category_key.replace('Stock', '').lower()} you're monitoring are now in stock:",
+                    title=f"GrowAGarden Stock Alert! ({dm_type.capitalize()})",
+                    description=f"The following {dm_type} you're monitoring are now in stock:",
                     color=discord.Color.orange(),
                     timestamp=datetime.utcnow()
                 )
@@ -490,8 +504,9 @@ async def autostock_checker():
                 for item_name in newly_in_stock_for_dm:
                     dm_embed.add_field(name=f"✅ {item_name}", value="Available now!", inline=False)
 
-                for user_id, enabled in DM_NOTIFIED_USERS.items():
-                    if enabled:
+                for user_id, preferences in DM_NOTIFIED_USERS.items():
+                    # Check if this specific type of DM is enabled for the user
+                    if preferences.get(dm_type, False):
                         user = bot.get_user(user_id)
                         if user is None:
                             try:
@@ -506,14 +521,14 @@ async def autostock_checker():
                         if user:
                             try:
                                 await user.send(embed=dm_embed)
-                                print(f"Sent DM notification to {user.name} ({user.id}) for new {category_key.replace('Stock', '').lower()}.")
+                                print(f"Sent DM notification to {user.name} ({user.id}) for new {dm_type}.")
                             except discord.Forbidden:
                                 print(f"Could not send DM to {user.name} ({user.id}). User has DMs disabled or blocked bot.")
                             except Exception as e:
                                 print(f"An unexpected error occurred while sending DM to {user.name} ({user.id}): {e}")
 
             # Update the last known status for this category
-            LAST_KNOWN_DM_ITEM_STATUS[category_key] = currently_available_dm_items
+            LAST_KNOWN_DM_ITEM_STATUS[api_category_key] = currently_available_dm_items
 
 
 @autostock_checker.before_loop
@@ -1016,7 +1031,7 @@ async def help_command(ctx):
     # --- DM Notification Commands ---
     dm_notify_commands_desc = (
         f"`!seedstockdm`: Toggles DM notifications for Beanstalk, Pepper, and Mushroom seeds. (Requires role ID: `{DM_NOTIFY_ROLE_ID}` OR `{DM_BYPASS_ROLE_ID}`)\n"
-        f"`!gearstockdm`: Toggles DM notifications for monitored gear items. (Requires role ID: `{DM_NOTIFY_ROLE_ID}` OR `{DM_BYPASS_ROLE_ID}`)"
+        f"`!gearstockdm`: Toggles DM notifications for Master Sprinkler and Lightning Rod. (Requires role ID: `{DM_NOTIFY_ROLE_ID}` OR `{DM_BYPASS_ROLE_ID}`)"
     )
     embed.add_field(name="__DM Notification Commands__", value=dm_notify_commands_desc, inline=False)
 
@@ -1033,29 +1048,28 @@ async def seed_stock_dm_toggle(ctx):
     Only works for users with a specific role ID or the bypass role.
     Usage: !seedstockdm
     """
-    # The permission check is now handled by the decorators above.
-    # No need for manual role check here.
+    user_id = ctx.author.id
+    # Initialize user's preferences if they don't exist
+    if user_id not in DM_NOTIFIED_USERS:
+        DM_NOTIFIED_USERS[user_id] = {"seeds": False, "gear": False} # Ensure all types are initialized
 
-    if DM_NOTIFIED_USERS.get(ctx.author.id, False):
-        DM_NOTIFIED_USERS[ctx.author.id] = False
-        status_message = "disabled"
-        color = discord.Color.red()
-    else:
-        DM_NOTIFIED_USERS[ctx.author.id] = True
-        status_message = "enabled"
-        color = discord.Color.green()
+    current_status = DM_NOTIFIED_USERS[user_id].get("seeds", False)
+    DM_NOTIFIED_USERS[user_id]["seeds"] = not current_status
+
+    status_message = "enabled" if DM_NOTIFIED_USERS[user_id]["seeds"] else "disabled"
+    color = discord.Color.green() if DM_NOTIFIED_USERS[user_id]["seeds"] else discord.Color.red()
 
     save_dm_users() # Save the updated state
 
     embed = discord.Embed(
-        title="DM Notification Status",
-        description=f"Your DM notifications for monitored seeds and gear have been **{status_message}**.",
+        title="Seed DM Notification Status",
+        description=f"Your DM notifications for Beanstalk, Pepper, and Mushroom seeds have been **{status_message}**.",
         color=color,
         timestamp=datetime.utcnow()
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
-    await ctx.author.send(f"Your GrowAGarden stock DM notifications are now **{status_message}**.")
+    await ctx.author.send(f"Your GrowAGarden **seed** stock DM notifications are now **{status_message}**.")
 
 # --- DM Notification Command for Gear ---
 @bot.command(name="gearstockdm")
@@ -1067,29 +1081,28 @@ async def gear_stock_dm_toggle(ctx):
     Only works for users with a specific role ID or the bypass role.
     Usage: !gearstockdm
     """
-    # The permission check is now handled by the decorators above.
-    # No need for manual role check here.
+    user_id = ctx.author.id
+    # Initialize user's preferences if they don't exist
+    if user_id not in DM_NOTIFIED_USERS:
+        DM_NOTIFIED_USERS[user_id] = {"seeds": False, "gear": False} # Ensure all types are initialized
 
-    if DM_NOTIFIED_USERS.get(ctx.author.id, False):
-        DM_NOTIFIED_USERS[ctx.author.id] = False
-        status_message = "disabled"
-        color = discord.Color.red()
-    else:
-        DM_NOTIFIED_USERS[ctx.author.id] = True
-        status_message = "enabled"
-        color = discord.Color.green()
+    current_status = DM_NOTIFIED_USERS[user_id].get("gear", False)
+    DM_NOTIFIED_USERS[user_id]["gear"] = not current_status
+
+    status_message = "enabled" if DM_NOTIFIED_USERS[user_id]["gear"] else "disabled"
+    color = discord.Color.green() if DM_NOTIFIED_USERS[user_id]["gear"] else discord.Color.red()
 
     save_dm_users() # Save the updated state
 
     embed = discord.Embed(
-        title="DM Notification Status",
-        description=f"Your DM notifications for monitored seeds and gear have been **{status_message}**.",
+        title="Gear DM Notification Status",
+        description=f"Your DM notifications for Master Sprinkler and Lightning Rod have been **{status_message}**.",
         color=color,
         timestamp=datetime.utcnow()
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
-    await ctx.author.send(f"Your GrowAGarden stock DM notifications are now **{status_message}**.")
+    await ctx.author.send(f"Your GrowAGarden **gear** stock DM notifications are now **{status_message}**.")
 
 
 # --- Roblox Username Lookup Command ---
