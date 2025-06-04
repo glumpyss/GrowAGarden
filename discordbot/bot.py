@@ -1,4 +1,4 @@
-import os # <--- IMPORTANT: Added this import for environment variables
+import os
 import discord
 from discord.ext import commands, tasks
 import aiohttp
@@ -23,11 +23,8 @@ AUTOSTOCK_ENABLED = False
 LAST_STOCK_DATA = None
 STOCK_API_URL = "https://growagardenapi.vercel.app/api/stock/GetStock"
 
-# !!! IMPORTANT !!!
-# Set this to the ID of the channel where you want autostock updates to be sent.
-# You can get a channel's ID by right-clicking on it in Discord and selecting "Copy ID".
-# Make sure Developer Mode is enabled in Discord settings (User Settings -> Advanced).
-AUTOSTOCK_CHANNEL_ID = YOUR_AUTOSTOCK_CHANNEL_ID_HERE # <-- REPLACE WITH YOUR CHANNEL ID (e.g., 123456789012345678)
+# AUTOSTOCK_CHANNEL_ID will be set dynamically when the !autostock on command is used.
+AUTOSTOCK_CHANNEL_ID = None
 
 STOCK_LOGS = [] # Stores a history of stock changes
 
@@ -183,19 +180,17 @@ async def autostock_toggle(ctx, status: str = None):
     status = status.lower()
     if status == "on":
         if AUTOSTOCK_ENABLED:
-            await ctx.send("Auto-stock is already enabled.")
-            return
-
-        # Ensure a valid channel ID is set for autostock
-        if AUTOSTOCK_CHANNEL_ID is None or AUTOSTOCK_CHANNEL_ID == YOUR_AUTOSTOCK_CHANNEL_ID_HERE:
-            await ctx.send(f"**Warning:** `AUTOSTOCK_CHANNEL_ID` is not properly configured in the bot's code. Please set it to a valid channel ID.")
+            # If autostock is already enabled, check if the channel is changing
+            if AUTOSTOCK_CHANNEL_ID != ctx.channel.id:
+                 AUTOSTOCK_CHANNEL_ID = ctx.channel.id
+                 await ctx.send(f"Auto-stock was already enabled, but the channel has been updated to this one (<#{AUTOSTOCK_CHANNEL_ID}>).")
+            else:
+                 await ctx.send("Auto-stock is already enabled in this channel.")
             return
 
         AUTOSTOCK_ENABLED = True
-        # AUTOSTOCK_CHANNEL_ID is meant to be set in the code initially, not dynamically via command
-        # If you wanted it to set the current channel, you'd do: AUTOSTOCK_CHANNEL_ID = ctx.channel.id
-        # But for persistent autostock in one channel, it's best set in the global variable above.
-        await ctx.send(f"Auto-stock updates are now **enabled** and will be sent to <#{AUTOSTOCK_CHANNEL_ID}>.")
+        AUTOSTOCK_CHANNEL_ID = ctx.channel.id # THIS LINE sets the channel dynamically!
+        await ctx.send(f"Auto-stock updates are now **enabled** and will be sent to this channel (<#{AUTOSTOCK_CHANNEL_ID}>).")
         # Trigger an immediate check when turned on, to send current stock
         await autostock_checker()
     elif status == "off":
@@ -203,6 +198,7 @@ async def autostock_toggle(ctx, status: str = None):
             await ctx.send("Auto-stock is already disabled.")
             return
         AUTOSTOCK_ENABLED = False
+        AUTOSTOCK_CHANNEL_ID = None # Clear the channel ID when turned off
         await ctx.send("Auto-stock updates are now **disabled**.")
     else:
         await ctx.send("Invalid status. Please use `on` or `off`.")
