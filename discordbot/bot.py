@@ -382,5 +382,5 @@ async def clear_messages(ctx, amount: int):
 
 # --- Run the Bot ---
 # Replace "YOUR_BOT_TOKEN_HERE" with your actual bot token
-bot.run("DISCORD_TOKEN")
+os.getenv("DISCORD_TOKEN")
 
