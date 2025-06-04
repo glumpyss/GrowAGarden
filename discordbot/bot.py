@@ -4,6 +4,7 @@ from discord.ext import commands, tasks
 import aiohttp
 import asyncio
 from datetime import datetime, timedelta
+import json # Import json for explicit JSONDecodeError handling
 
 # --- Bot Setup ---
 # Define Intents: Crucial for your bot to receive events from Discord.
@@ -34,13 +35,39 @@ async def fetch_stock_data():
     async with aiohttp.ClientSession() as session:
         try:
             async with session.get(STOCK_API_URL) as response:
-                response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-                return await response.json()
+                print(f"API Response Status: {response.status}")
+                print(f"API Response Content-Type: {response.headers.get('Content-Type')}")
+
+                # Raise an exception for bad status codes (4xx or 5xx)
+                # This will catch typical HTTP errors
+                response.raise_for_status()
+
+                try:
+                    # Attempt to parse as JSON
+                    json_data = await response.json()
+                    print(f"API Response (JSON parsed): {json_data}")
+                    return json_data
+                except aiohttp.ContentTypeError:
+                    # This occurs if the server returns a non-JSON Content-Type, but response.json() was called
+                    text_data = await response.text()
+                    print(f"API Error: Content-Type is not application/json. Raw text: {text_data}")
+                    return None
+                except json.JSONDecodeError as json_err:
+                    # This occurs if the content is not valid JSON, even if Content-Type is application/json
+                    text_data = await response.text()
+                    print(f"API Error: JSON decoding failed ({json_err}). Raw text: {text_data}")
+                    return None
+                except Exception as parse_err:
+                    # Catch any other unexpected errors during JSON parsing
+                    text_data = await response.text()
+                    print(f"API Error: Unexpected parsing error ({parse_err}). Raw text: {text_data}")
+                    return None
+
         except aiohttp.ClientError as e:
-            print(f"API Error: Could not fetch stock data: {e}")
+            print(f"API Client Error (network/connection issue): {e}")
             return None
         except Exception as e:
-            print(f"An unexpected error occurred during API fetch: {e}")
+            print(f"An unexpected error occurred during API fetch process: {e}")
             return None
 
 # --- Helper Function to Create Stock Embed ---
@@ -61,6 +88,7 @@ def create_stock_embed(data, title="Current Stock Information"):
     for item in data:
         # Ensure all expected keys exist before accessing to prevent KeyError
         required_keys = ['name', 'category', 'price', 'quantity', 'image']
+        # The 'get' method is called here. If 'item' is a string, this will fail.
         if all(key in item for key in required_keys):
             embed.add_field(
                 name=f"{item['name']} ({item['category'].capitalize()})",
@@ -132,7 +160,7 @@ async def get_seeds(ctx):
         await ctx.send("Fetching seed information... please wait a moment.")
         all_stock_data = await fetch_stock_data()
         if not all_stock_data:
-            await ctx.send("Apologies, I couldn't retrieve stock information from the API. It might be down or experiencing issues. Please try again later!")
+            await ctx.send("Apologies, I couldn't retrieve stock information from the API. It might be down or experiencing issues, or returned no data. Please try again later!")
             return
 
         seed_data = [item for item in all_stock_data if item.get('category', '').lower() == 'seeds']
@@ -169,7 +197,7 @@ async def get_stock_by_category(ctx, category: str = None):
         await ctx.send(f"Fetching {category} stock information... please wait a moment.")
         all_stock_data = await fetch_stock_data()
         if not all_stock_data:
-            await ctx.send("Apologies, I couldn't retrieve stock information from the API. It might be down or experiencing issues. Please try again later!")
+            await ctx.send("Apologies, I couldn't retrieve stock information from the API. It might be down or experiencing issues, or returned no data. Please try again later!")
             return
 
         filtered_stock_data = [item for item in all_stock_data if item.get('category', '').lower() == category]
@@ -240,8 +268,7 @@ async def autostock_checker():
 
     if current_stock_data is None:
         print("Autostock: Failed to fetch current stock data. Skipping update for this cycle.")
-        # Optionally, you could send a message to the channel if the API is consistently failing.
-        return
+        return # Returns early if data is None
 
     # Helper to normalize stock data for comparison (order-independent comparison)
     def normalize_stock_data(data):
@@ -272,13 +299,14 @@ async def autostock_checker():
                 if len(STOCK_LOGS) > 10:
                     STOCK_LOGS.pop(0) # Remove the oldest log
 
+                LAST_STOCK_DATA = current_stock_data # Update LAST_STOCK_DATA here AFTER successful processing
+
             except discord.Forbidden:
                 print(f"Autostock: Bot does not have permission to send messages/embeds in channel {channel.name} ({channel.id}). Please check bot permissions!")
             except Exception as e:
                 print(f"Autostock: An unexpected error occurred while sending embed: {e}")
         else:
             print(f"Autostock: Configured channel with ID {AUTOSTOCK_CHANNEL_ID} not found or inaccessible. Disabling autostock.")
-            # No need for 'global AUTOSTOCK_ENABLED' here, as it's already declared at the top of the function
             AUTOSTOCK_ENABLED = False
 
 
@@ -336,7 +364,7 @@ async def ban_command(ctx, member: discord.Member, *, reason: str = "No reason p
     # Check if the target member has a higher or equal role than the commander
     if ctx.author.top_role <= member.top_role and ctx.author.id != ctx.guild.owner_id:
         await ctx.send("You cannot ban someone with an equal or higher role than yourself.")
-        return
+    return
     # Check if the target member has a higher or equal role than the bot
     if ctx.guild.me.top_role <= member.top_role:
         await ctx.send("I cannot ban this user as their role is equal to or higher than my top role. Please adjust my role hierarchy.")
