@@ -41,6 +41,7 @@ active_tictactoe_games = {} # {channel_id: TicTacToeGame instance}
 
 # --- DM Notification Specifics ---
 DM_NOTIFY_ROLE_ID = 1302076375922118696  # The specific role ID for DM notifications
+DM_BYPASS_ROLE_ID = 1379754489724145684 # New role ID that can bypass DM notification command requirements
 DM_NOTIFICATION_LOG_CHANNEL_ID = 1379734424895361054 # Channel to log stock changes for DM notifications
 DM_NOTIFIED_USERS = {} # {user_id: True/False (enabled/disabled)}
 
@@ -1014,8 +1015,8 @@ async def help_command(ctx):
 
     # --- DM Notification Commands ---
     dm_notify_commands_desc = (
-        f"`!seedstockdm`: Toggles DM notifications for Beanstalk, Pepper, and Mushroom seeds. (Role ID: `{DM_NOTIFY_ROLE_ID}` required)\n"
-        f"`!gearstockdm`: Toggles DM notifications for monitored gear items. (Role ID: `{DM_NOTIFY_ROLE_ID}` required)"
+        f"`!seedstockdm`: Toggles DM notifications for Beanstalk, Pepper, and Mushroom seeds. (Requires role ID: `{DM_NOTIFY_ROLE_ID}` OR `{DM_BYPASS_ROLE_ID}`)\n"
+        f"`!gearstockdm`: Toggles DM notifications for monitored gear items. (Requires role ID: `{DM_NOTIFY_ROLE_ID}` OR `{DM_BYPASS_ROLE_ID}`)"
     )
     embed.add_field(name="__DM Notification Commands__", value=dm_notify_commands_desc, inline=False)
 
@@ -1025,31 +1026,15 @@ async def help_command(ctx):
 # --- DM Notification Command for Seeds ---
 @bot.command(name="seedstockdm")
 @commands.guild_only()
+@commands.check_any(commands.has_role(DM_NOTIFY_ROLE_ID), commands.has_role(DM_BYPASS_ROLE_ID))
 async def seed_stock_dm_toggle(ctx):
     """
     Toggles DM notifications for Beanstalk, Pepper, and Mushroom seeds.
-    Only works for users with a specific role ID.
+    Only works for users with a specific role ID or the bypass role.
     Usage: !seedstockdm
     """
-    # Check if the user has the required role
-    required_role = discord.utils.get(ctx.guild.roles, id=DM_NOTIFY_ROLE_ID)
-    if not required_role or required_role not in ctx.author.roles:
-        embed = discord.Embed(
-            title="Permission Denied",
-            description=f"You need the role with ID `{DM_NOTIFY_ROLE_ID}` to use this command.",
-            color=discord.Color.red(),
-            timestamp=datetime.utcnow()
-        )
-        embed.set_footer(text="made by summers 2000")
-        await ctx.send(embed=embed, delete_after=10)
-        return
-
-    # DM_NOTIFIED_USERS stores a boolean for each user, indicating if ANY DM notification is enabled.
-    # The specific items they monitor are defined in DM_MONITORED_CATEGORIES.
-    # For now, this toggle will simply enable/disable ALL DM notifications for the user.
-    # If more granular control is needed (e.g., enable seeds but disable gear for a user),
-    # DM_NOTIFIED_USERS would need to store a dictionary of preferences per user.
-    # For this request, I'll keep the current simple toggle logic for the user.
+    # The permission check is now handled by the decorators above.
+    # No need for manual role check here.
 
     if DM_NOTIFIED_USERS.get(ctx.author.id, False):
         DM_NOTIFIED_USERS[ctx.author.id] = False
@@ -1075,29 +1060,15 @@ async def seed_stock_dm_toggle(ctx):
 # --- DM Notification Command for Gear ---
 @bot.command(name="gearstockdm")
 @commands.guild_only()
+@commands.check_any(commands.has_role(DM_NOTIFY_ROLE_ID), commands.has_role(DM_BYPASS_ROLE_ID))
 async def gear_stock_dm_toggle(ctx):
     """
     Toggles DM notifications for specific gear items.
-    Only works for users with a specific role ID.
+    Only works for users with a specific role ID or the bypass role.
     Usage: !gearstockdm
     """
-    # Check if the user has the required role
-    required_role = discord.utils.get(ctx.guild.roles, id=DM_NOTIFY_ROLE_ID)
-    if not required_role or required_role not in ctx.author.roles:
-        embed = discord.Embed(
-            title="Permission Denied",
-            description=f"You need the role with ID `{DM_NOTIFY_ROLE_ID}` to use this command.",
-            color=discord.Color.red(),
-            timestamp=datetime.utcnow()
-        )
-        embed.set_footer(text="made by summers 2000")
-        await ctx.send(embed=embed, delete_after=10)
-        return
-
-    # This command uses the same global DM_NOTIFIED_USERS toggle.
-    # If more granular control is needed (e.g., enable seeds but disable gear for a user),
-    # DM_NOTIFIED_USERS would need to store a dictionary of preferences per user.
-    # For this request, I'll keep the current simple toggle logic for the user.
+    # The permission check is now handled by the decorators above.
+    # No need for manual role check here.
 
     if DM_NOTIFIED_USERS.get(ctx.author.id, False):
         DM_NOTIFIED_USERS[ctx.author.id] = False
