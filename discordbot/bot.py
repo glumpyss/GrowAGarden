@@ -164,8 +164,8 @@ async def get_all_stock(ctx):
             return
 
         embed = discord.Embed(
-            title="Grow A Garden Stock",
-            description="This is the Current Grow a Garden Stock:",
+            title="Comprehensive Stock Overview",
+            description="Here's what's currently available across all categories:",
             color=discord.Color.blue(),
             timestamp=datetime.utcnow()
         )
@@ -673,6 +673,46 @@ async def clear_messages(ctx, amount: int):
     except Exception as e:
         await ctx.send(f"An unexpected error occurred while trying to clear messages: `{e}`")
 
+---
+### New Help Command!
+---
+
+@bot.command(name="help", aliases=["commands"])
+async def help_command(ctx):
+    """
+    Displays a list of all available commands.
+    Usage: !help
+    """
+    embed = discord.Embed(
+        title="GrowAGarden Bot Commands",
+        description="Here's a list of all available commands and their usage:",
+        color=discord.Color.blue(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+
+    # --- Stock & Auto-Stock Commands ---
+    stock_commands_desc = (
+        f"`!stockall` (or `!seed`): Displays a comprehensive overview of all current stock.\n"
+        f"`!stock <category>`: Shows stock for a specific category. (e.g., `!stock seeds`)\n"
+        f"Available categories: `seeds`, `eggs`, `bees`, `cosmetics`, `gear`, `honey`, `night`\n"
+        f"`!autostock <on/off>`: Toggles automatic stock updates to the current channel.\n"
+        f"`!restocklogs`: Shows recent stock change history."
+    )
+    embed.add_field(name="__Stock & Auto-Stock Commands__", value=stock_commands_desc, inline=False)
+
+    # --- Moderation Commands ---
+    moderation_commands_desc = (
+        f"`!ban <@user> [reason]`: Bans a member from the server.\n"
+        f"`!kick <@user> [reason]`: Kicks a member from the server.\n"
+        f"`!mute <@user> [duration_minutes] [reason]`: Mutes a member. Requires a 'Muted' role.\n"
+        f"`!unmute <@user>`: Unmutes a member.\n"
+        f"`!slowmode <seconds>`: Sets slowmode for the channel (0 to disable).\n"
+        f"`!clear <amount>` (or `!purge`): Deletes a specified number of messages (max 100)."
+    )
+    embed.add_field(name="__Moderation Commands__", value=moderation_commands_desc, inline=False)
+
+    await ctx.send(embed=embed)
 
 # --- Run the Bot ---
 # Get the bot token from an environment variable (e.g., DISCORD_TOKEN in Railway)
