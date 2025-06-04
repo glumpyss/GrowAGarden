@@ -164,8 +164,8 @@ async def get_all_stock(ctx):
             return
 
         embed = discord.Embed(
-            title="Comprehensive Stock Overview",
-            description="Here's what's currently available across all categories:",
+            title="Grow A Garden Stock",
+            description="This is the Current Grow a Garden Stock:",
             color=discord.Color.blue(),
             timestamp=datetime.utcnow()
         )
