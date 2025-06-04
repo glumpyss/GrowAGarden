@@ -4,7 +4,7 @@ from discord.ext import commands, tasks
 import aiohttp
 import asyncio
 from datetime import datetime, timedelta
-import json # Import json for explicit JSONDecodeError handling
+import json
 
 # --- Bot Setup ---
 # Define Intents: Crucial for your bot to receive events from Discord.
@@ -21,7 +21,7 @@ bot = commands.Bot(command_prefix=("!", ":"), intents=intents)
 
 # --- Global Variables for Autostock ---
 AUTOSTOCK_ENABLED = False
-LAST_STOCK_DATA = None
+LAST_STOCK_DATA = None # Will store the full dictionary response
 STOCK_API_URL = "https://growagardenapi.vercel.app/api/stock/GetStock"
 
 # AUTOSTOCK_CHANNEL_ID will be set dynamically when the !autostock on command is used.
@@ -38,27 +38,21 @@ async def fetch_stock_data():
                 print(f"API Response Status: {response.status}")
                 print(f"API Response Content-Type: {response.headers.get('Content-Type')}")
 
-                # Raise an exception for bad status codes (4xx or 5xx)
-                # This will catch typical HTTP errors
-                response.raise_for_status()
+                response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
 
                 try:
-                    # Attempt to parse as JSON
                     json_data = await response.json()
-                    print(f"API Response (JSON parsed): {json_data}")
+                    print(f"API Response (JSON parsed successfully): {json_data}")
                     return json_data
                 except aiohttp.ContentTypeError:
-                    # This occurs if the server returns a non-JSON Content-Type, but response.json() was called
                     text_data = await response.text()
                     print(f"API Error: Content-Type is not application/json. Raw text: {text_data}")
                     return None
                 except json.JSONDecodeError as json_err:
-                    # This occurs if the content is not valid JSON, even if Content-Type is application/json
                     text_data = await response.text()
                     print(f"API Error: JSON decoding failed ({json_err}). Raw text: {text_data}")
                     return None
                 except Exception as parse_err:
-                    # Catch any other unexpected errors during JSON parsing
                     text_data = await response.text()
                     print(f"API Error: Unexpected parsing error ({parse_err}). Raw text: {text_data}")
                     return None
@@ -72,7 +66,10 @@ async def fetch_stock_data():
 
 # --- Helper Function to Create Stock Embed ---
 def create_stock_embed(data, title="Current Stock Information"):
-    """Creates a Discord Embed for stock data."""
+    """
+    Creates a Discord Embed for stock data.
+    'data' is expected to be a LIST of individual stock item dictionaries.
+    """
     embed = discord.Embed(
         title=title,
         color=discord.Color.green(),
@@ -81,32 +78,33 @@ def create_stock_embed(data, title="Current Stock Information"):
     embed.set_footer(text="GrowAGarden Bot")
 
     if not data:
-        embed.description = "No stock information available at this time."
+        embed.description = "No stock information available at this time for this category."
         return embed
 
-    # Add fields for each item in stock
     for item in data:
-        # Ensure all expected keys exist before accessing to prevent KeyError
-        required_keys = ['name', 'category', 'price', 'quantity', 'image']
-        # The 'get' method is called here. If 'item' is a string, this will fail.
-        if all(key in item for key in required_keys):
-            embed.add_field(
-                name=f"{item['name']} ({item['category'].capitalize()})",
-                value=(f"Price: {item['price']}\n"
-                       f"Quantity: {item['quantity']}"),
-                inline=True
-            )
-        else:
-            # Log and indicate if an item has incomplete data
-            missing_keys = [key for key in required_keys if key not in item]
-            print(f"Warning: Item missing expected keys ({missing_keys}) in API response: {item}")
-            embed.add_field(
-                name="Incomplete Item Data",
-                value=f"One or more items in the stock list were missing information. Check bot logs for details.",
-                inline=False
-            )
-            # Only add one such warning field to avoid spam
-            break
+        required_keys = ['name', 'value', 'image', 'emoji'] # Note: 'value' for quantity, 'image' for URL
+        # The API also sends 'price' and 'quantity', but 'value' is used for quantity in 'seedsStock' and other lists
+        # Let's adjust required_keys to match the actual received data for 'seedsStock'
+        # The log shows 'value' for quantity, not 'quantity'
+        # And no 'category' field on the individual item, only in the top-level key (e.g. 'seedsStock')
+
+        # To be robust, let's use common keys and provide defaults
+        item_name = item.get('name', 'N/A')
+        item_quantity = item.get('value', 'N/A') # Using 'value' as per your API response for quantity
+        item_image = item.get('image')
+        item_emoji = item.get('emoji', '')
+
+        field_value = f"Quantity: {item_quantity}"
+        if item_image and isinstance(item_image, str): # Ensure image is a string before setting
+            embed.set_thumbnail(url=item_image) # Set thumbnail to the first item's image for visual appeal
+            # If you want each item's image to be displayed, you might need to send multiple embeds
+            # or use image within the field value if Discord supports it (not typically for embed fields)
+
+        embed.add_field(
+            name=f"{item_name} {item_emoji}",
+            value=field_value,
+            inline=True
+        )
     return embed
 
 # --- Events ---
@@ -130,8 +128,7 @@ async def on_command_error(ctx, error):
     elif isinstance(error, commands.BadArgument):
         await ctx.send(f"**Invalid input!** One of your arguments was incorrect. Correct usage: `{ctx.prefix}{ctx.command.name} {ctx.command.signature}`")
     elif isinstance(error, commands.CommandNotFound):
-        # We can ignore this error if we don't want to respond to every non-existent command
-        pass
+        pass # Ignore command not found errors to avoid spam
     elif isinstance(error, commands.MissingPermissions):
         missing_perms = [p.replace('_', ' ').title() for p in error.missing_permissions]
         await ctx.send(f"**Permission Denied!** You need the following permission(s) to use this command: `{', '.join(missing_perms)}`")
@@ -143,7 +140,6 @@ async def on_command_error(ctx, error):
     elif isinstance(error, commands.CommandOnCooldown):
         await ctx.send(f"This command is on cooldown. Please try again in `{error.retry_after:.1f}` seconds.")
     else:
-        # For any other unhandled errors, log them and notify the user
         print(f"An unhandled error occurred in command '{ctx.command.name}': {error}")
         await ctx.send(f"**An unexpected error occurred:** `{error}`. My apologies! Please try again later or contact an administrator.")
 
@@ -163,7 +159,9 @@ async def get_seeds(ctx):
             await ctx.send("Apologies, I couldn't retrieve stock information from the API. It might be down or experiencing issues, or returned no data. Please try again later!")
             return
 
-        seed_data = [item for item in all_stock_data if item.get('category', '').lower() == 'seeds']
+        # Access the 'seedsStock' key directly from the dictionary
+        seed_data = all_stock_data.get('seedsStock', [])
+        
         if not seed_data:
             await ctx.send("Currently, there are no seed stock items available.")
             return
@@ -180,17 +178,27 @@ async def get_stock_by_category(ctx, category: str = None):
     """
     Displays current stock information for a specific category.
     Usage: !stock [category] (e.g., !stock seeds)
-    Available categories: seeds, eggs, bees, cosmetics, gear
+    Available categories: seeds, eggs, bees, cosmetics, gear, honey, night
     """
     if category is None:
-        await ctx.send("Please specify a category. Available categories: `seeds`, `eggs`, `bees`, `cosmetics`, `gear`.\nExample: `!stock seeds`")
+        await ctx.send("Please specify a category. Available categories: `seeds`, `eggs`, `bees`, `cosmetics`, `gear`, `honey`, `night`.\nExample: `!stock seeds`")
         return
 
-    valid_categories = ['seeds', 'eggs', 'bees', 'cosmetics', 'gear']
-    category = category.lower()
+    # Map user-friendly input to API keys
+    category_map = {
+        'seeds': 'seedsStock',
+        'eggs': 'eggStock',
+        'bees': 'honeyStock', # API uses 'honeyStock' for bees
+        'cosmetics': 'cosmeticsStock',
+        'gear': 'gearStock',
+        'honey': 'honeyStock',
+        'night': 'nightStock'
+    }
 
-    if category not in valid_categories:
-        await ctx.send(f"**Invalid category!** Available categories are: {', '.join(valid_categories)}. Please choose one of these.")
+    api_category_key = category_map.get(category.lower())
+
+    if not api_category_key:
+        await ctx.send(f"**Invalid category!** Available categories are: {', '.join(category_map.keys())}. Please choose one of these.")
         return
 
     try:
@@ -200,7 +208,9 @@ async def get_stock_by_category(ctx, category: str = None):
             await ctx.send("Apologies, I couldn't retrieve stock information from the API. It might be down or experiencing issues, or returned no data. Please try again later!")
             return
 
-        filtered_stock_data = [item for item in all_stock_data if item.get('category', '').lower() == category]
+        # Access the specific stock list using the mapped key
+        filtered_stock_data = all_stock_data.get(api_category_key, [])
+        
         if not filtered_stock_data:
             await ctx.send(f"Currently, there are no `{category}` stock items available.")
             return
@@ -258,7 +268,6 @@ async def autostock_toggle(ctx, status: str = None):
 @tasks.loop(minutes=5) # Checks every 5 minutes
 async def autostock_checker():
     """Background task to check for new stock updates."""
-    # This global declaration must be the first thing in the function if you plan to modify these variables
     global AUTOSTOCK_ENABLED, LAST_STOCK_DATA, AUTOSTOCK_CHANNEL_ID, STOCK_LOGS
 
     if not AUTOSTOCK_ENABLED or AUTOSTOCK_CHANNEL_ID is None:
@@ -268,38 +277,49 @@ async def autostock_checker():
 
     if current_stock_data is None:
         print("Autostock: Failed to fetch current stock data. Skipping update for this cycle.")
-        return # Returns early if data is None
+        return
 
-    # Helper to normalize stock data for comparison (order-independent comparison)
-    def normalize_stock_data(data):
+    # Helper to normalize the ENTIRE stock data for comparison (order-independent comparison of all items)
+    def normalize_full_stock_data(data):
         if not data:
             return frozenset()
-        return frozenset(frozenset(d.items()) for d in data)
+        
+        normalized_items = []
+        for category_key, items_list in data.items():
+            # Skip 'lastSeen' as it's metadata, not actual stock
+            if category_key == 'lastSeen':
+                continue
+            if isinstance(items_list, list):
+                for item in items_list:
+                    # Convert each item dict to a frozenset of its key-value pairs for hashability
+                    normalized_items.append(frozenset(item.items()))
+        return frozenset(normalized_items)
 
-    normalized_current = normalize_stock_data(current_stock_data)
-    normalized_last = normalize_stock_data(LAST_STOCK_DATA)
+    normalized_current = normalize_full_stock_data(current_stock_data)
+    normalized_last = normalize_full_stock_data(LAST_STOCK_DATA)
 
     # Check if stock data has genuinely changed or if it's the first run
     if LAST_STOCK_DATA is None or normalized_current != normalized_last:
         channel = bot.get_channel(AUTOSTOCK_CHANNEL_ID)
         if channel:
-            embed = create_stock_embed(current_stock_data, title="New Stock Update!")
+            # For autostock, we'll send updates about 'seedsStock' for now.
+            # If you want updates for ALL categories, you'd need a more complex embed or multiple embeds.
+            seeds_for_embed = current_stock_data.get('seedsStock', [])
+            embed = create_stock_embed(seeds_for_embed, title="New Seed Stock Update!")
             try:
                 await channel.send(embed=embed)
-                print(f"Autostock: New stock detected and sent to channel {channel.name} ({channel.id}).")
+                print(f"Autostock: New seed stock detected and sent to channel {channel.name} ({channel.id}).")
 
                 # Log the stock change
                 stock_time = datetime.now()
-                # Get seed names for logging
-                seed_names = [item['name'] for item in current_stock_data if item.get('category', '').lower() == 'seeds' and 'name' in item]
+                # Get seed names for logging from the 'seedsStock' list
+                seed_names = [item.get('name', 'Unknown Seed') for item in seeds_for_embed]
                 seeds_in_stock_str = ", ".join(seed_names) if seed_names else "No seeds in stock"
                 STOCK_LOGS.append({'time': stock_time, 'seeds_in_stock': seeds_in_stock_str})
 
                 # Keep only the last 10 logs (or adjust as needed)
                 if len(STOCK_LOGS) > 10:
                     STOCK_LOGS.pop(0) # Remove the oldest log
-
-                LAST_STOCK_DATA = current_stock_data # Update LAST_STOCK_DATA here AFTER successful processing
 
             except discord.Forbidden:
                 print(f"Autostock: Bot does not have permission to send messages/embeds in channel {channel.name} ({channel.id}). Please check bot permissions!")
@@ -308,6 +328,9 @@ async def autostock_checker():
         else:
             print(f"Autostock: Configured channel with ID {AUTOSTOCK_CHANNEL_ID} not found or inaccessible. Disabling autostock.")
             AUTOSTOCK_ENABLED = False
+        
+        # Always update LAST_STOCK_DATA with the full, new data after comparison and potential notification
+        LAST_STOCK_DATA = current_stock_data
 
 
 @autostock_checker.before_loop
@@ -364,7 +387,7 @@ async def ban_command(ctx, member: discord.Member, *, reason: str = "No reason p
     # Check if the target member has a higher or equal role than the commander
     if ctx.author.top_role <= member.top_role and ctx.author.id != ctx.guild.owner_id:
         await ctx.send("You cannot ban someone with an equal or higher role than yourself.")
-    return
+        return # Added missing return here
     # Check if the target member has a higher or equal role than the bot
     if ctx.guild.me.top_role <= member.top_role:
         await ctx.send("I cannot ban this user as their role is equal to or higher than my top role. Please adjust my role hierarchy.")
