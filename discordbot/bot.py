@@ -466,35 +466,29 @@ async def next_restock_time(ctx):
 @commands.cooldown(1, 15, commands.BucketType.channel) # Cooldown to prevent API spam
 async def get_weather(ctx):
     """
-    Displays current weather information from the Grow A Garden in-game API.
+    Displays current in-game weather conditions (e.g., Rain, Sunny, Thunder).
     Usage: !weather
     """
     try:
-        await ctx.send("Fetching in-game weather information... please wait a moment.")
+        await ctx.send("Fetching current in-game weather... please wait a moment.")
         weather_data = await fetch_api_data(WEATHER_API_URL)
 
         if not weather_data:
             await ctx.send("Apologies, I couldn't retrieve weather information from the API. It might be down or experiencing issues, or returned no data. Please try again later!")
             return
 
-        # Extracting data, handling potential missing keys
-        location = weather_data.get('location', 'Unknown Location')
-        temperature = weather_data.get('temperature', 'N/A')
-        description = weather_data.get('description', 'N/A')
-        humidity = weather_data.get('humidity', 'N/A')
-        wind_speed = weather_data.get('windSpeed', 'N/A')
-        icon_url = weather_data.get('icon', None) # Assuming 'icon' is a URL to an image
+        # Extracting relevant data: location and description (which should be the weather type)
+        location = weather_data.get('location', 'Grow A Garden') # Default to "Grow A Garden"
+        description = weather_data.get('description', 'Unknown weather conditions.')
+        icon_url = weather_data.get('icon', None) # Icon for the weather type
 
         embed = discord.Embed(
-            title=f"Current In-Game Weather in {location}", # Updated title for clarity
-            description=f"**Conditions:** {description.capitalize()}",
+            title=f"Current In-Game Weather in {location}",
+            description=f"**Conditions:** `{description.capitalize()}`",
             color=discord.Color.blue(),
             timestamp=datetime.utcnow()
         )
-        embed.add_field(name="Temperature", value=f"`{temperature}°F`", inline=True)
-        embed.add_field(name="Humidity", value=f"`{humidity}%`", inline=True)
-        embed.add_field(name="Wind Speed", value=f"`{wind_speed} mph`", inline=True)
-
+        
         if icon_url:
             embed.set_thumbnail(url=icon_url)
 
@@ -878,7 +872,7 @@ async def help_command(ctx):
 
     # --- Utility Commands ---
     utility_commands_desc = (
-        f"`!weather`: Displays current weather information.\n"
+        f"`!weather`: Displays current in-game weather conditions (e.g., Rain, Sunny).\n" # Updated description
         f"`!uptime`: Shows how long the bot has been online.\n"
         f"`!cmds` (or `!commands`, `!help`): Displays this help message."
     )
