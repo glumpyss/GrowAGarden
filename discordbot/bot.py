@@ -24,90 +24,104 @@ bot.remove_command('help') # This line removes the default help command
 AUTOSTOCK_ENABLED = False
 LAST_STOCK_DATA = None # Will store the full dictionary response
 STOCK_API_URL = "https://growagardenapi.vercel.app/api/stock/GetStock"
+RESTOCK_TIME_API_URL = "https://growagardenapi.vercel.app/api/stock/Restock-Time"
+WEATHER_API_URL = "https://growagardenapi.vercel.app/api/GetWeather"
 
 # AUTOSTOCK_CHANNEL_ID will be set dynamically when the !autostock on command is used.
 AUTOSTOCK_CHANNEL_ID = None
 
 STOCK_LOGS = [] # Stores a history of stock changes
 
+# Bot start time for uptime command
+BOT_START_TIME = datetime.utcnow()
+
+# --- Game States ---
+active_c4_games = {} # {channel_id: Connect4Game instance}
+active_tictactoe_games = {} # {channel_id: TicTacToeGame instance}
+
 # --- Helper Function for API Calls ---
-async def fetch_stock_data():
-    """Fetches stock data from the GrowAGarden API."""
+async def fetch_api_data(url):
+    """Fetches data from a given API URL."""
     async with aiohttp.ClientSession() as session:
         try:
-            async with session.get(STOCK_API_URL) as response:
-                print(f"API Response Status: {response.status}")
-                print(f"API Response Content-Type: {response.headers.get('Content-Type')}")
-
+            async with session.get(url) as response:
+                print(f"API Response Status ({url}): {response.status}")
                 response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-
                 try:
                     json_data = await response.json()
-                    print(f"API Response (JSON parsed successfully): {json_data}")
                     return json_data
                 except aiohttp.ContentTypeError:
                     text_data = await response.text()
-                    print(f"API Error: Content-Type is not application/json. Raw text: {text_data}")
+                    print(f"API Error: Content-Type is not application/json for {url}. Raw text: {text_data}")
                     return None
-                except json.JSONDecodeError as json_err:
-                    text_data = await response.text()
-                    print(f"API Error: JSON decoding failed ({json_err}). Raw text: {text_data}")
-                    return None
-                except Exception as parse_err:
-                    text_data = await response.text()
-                    print(f"API Error: Unexpected parsing error ({parse_err}). Raw text: {text_data}")
-                    return None
-
         except aiohttp.ClientError as e:
-            print(f"API Client Error (network/connection issue): {e}")
+            print(f"API Client Error (network/connection issue) for {url}: {e}")
             return None
         except Exception as e:
-            print(f"An unexpected error occurred during API fetch process: {e}")
+            print(f"An unexpected error occurred during API fetch process for {url}: {e}")
             return None
 
 # --- Helper Function to Create Stock Embed ---
 def create_stock_embed(data, title="Current Stock Information"):
     """
     Creates a Discord Embed for stock data.
-    'data' is expected to be a LIST of individual stock item dictionaries.
+    'data' is expected to be a DICTIONARY containing different stock lists (e.g., 'seedsStock', 'eggStock').
     """
     embed = discord.Embed(
         title=title,
         color=discord.Color.green(),
         timestamp=datetime.utcnow()
     )
-    # Changed the footer text as requested
     embed.set_footer(text="made by summers 2000")
 
     if not data:
-        embed.description = "No stock information available at this time for this category."
+        embed.description = "No stock information available at this time."
         return embed
 
-    # Display up to 5 items to keep the embed concise, or you can adjust this.
-    # For now, it will add all items. If too many, consider splitting or limiting.
-    for item in data:
-        item_name = item.get('name', 'N/A')
-        item_quantity = item.get('value', 'N/A') # Using 'value' for quantity
-        item_image = item.get('image')
-        item_emoji = item.get('emoji', '')
+    # Define the order of categories to display and their user-friendly names
+    display_categories = {
+        'seedsStock': "Seeds",
+        'eggStock': "Eggs",
+        'gearStock': "Gear",
+        'cosmeticsStock': "Cosmetics",
+        'honeyStock': "Bees & Honey", # Combined as per API structure
+        'nightStock': "Night Stock"
+    }
 
-        field_value = f"Quantity: {item_quantity}"
+    found_any_stock_item = False
+    for api_key, display_name in display_categories.items():
+        category_data = data.get(api_key, [])
+        if category_data:
+            found_any_stock_item = True
+            field_value = ""
+            # Limit items per category to keep embed readable
+            for item in category_data[:5]: # Display up to 5 items per category
+                item_name = item.get('name', 'N/A')
+                item_quantity = item.get('value', 'N/A')
+                item_emoji = item.get('emoji', '')
+                field_value += f"{item_emoji} {item_name}: **{item_quantity}**\n"
 
-        # Only set thumbnail once for the first item to avoid overwriting
-        if item_image and isinstance(item_image, str) and not embed.thumbnail:
-            embed.set_thumbnail(url=item_image)
+            if len(category_data) > 5:
+                field_value += f"...and {len(category_data) - 5} more."
 
-        embed.add_field(
-            name=f"{item_name} {item_emoji}",
-            value=field_value,
-            inline=True
-        )
+            embed.add_field(
+                name=f"__**{display_name}**__",
+                value=field_value if field_value else "No items in this category.",
+                inline=True
+            )
+
+    if not found_any_stock_item:
+        embed.description = "No stock information available across any categories at this time."
+
     return embed
+
 
 # --- Events ---
 @bot.event
 async def on_ready():
     """Event that fires when the bot successfully connects to Discord."""
+    global BOT_START_TIME
+    BOT_START_TIME = datetime.utcnow() # Record start time
     print(f"Bot logged in as {bot.user.name} (ID: {bot.user.id})")
     print("Bot is ready to receive commands!")
     # Start the autostock task when the bot is ready
@@ -159,55 +173,12 @@ async def get_all_stock(ctx):
     """
     try:
         await ctx.send("Fetching all stock information... please wait a moment.")
-        all_stock_data = await fetch_stock_data()
+        all_stock_data = await fetch_api_data(STOCK_API_URL)
         if not all_stock_data:
             await ctx.send("Apologies, I couldn't retrieve stock information from the API. It might be down or experiencing issues, or returned no data. Please try again later!")
             return
 
-        embed = discord.Embed(
-            title="Comprehensive Stock Overview",
-            description="Here's what's currently available across all categories:",
-            color=discord.Color.blue(),
-            timestamp=datetime.utcnow()
-        )
-        embed.set_footer(text="made by summers 2000")
-
-        # Define the order of categories to display and their user-friendly names
-        display_categories = {
-            'seedsStock': "Seeds",
-            'eggStock': "Eggs",
-            'gearStock': "Gear",
-            'cosmeticsStock': "Cosmetics",
-            'honeyStock': "Bees & Honey", # Combined as per API structure
-            'nightStock': "Night Stock"
-        }
-
-        found_any_stock = False
-        for api_key, display_name in display_categories.items():
-            category_data = all_stock_data.get(api_key, [])
-            if category_data:
-                found_any_stock = True
-                field_value = ""
-                # Limit items per category to keep embed readable
-                for item in category_data[:5]: # Display up to 5 items per category
-                    item_name = item.get('name', 'N/A')
-                    item_quantity = item.get('value', 'N/A')
-                    item_emoji = item.get('emoji', '')
-                    field_value += f"{item_emoji} {item_name}: **{item_quantity}**\n"
-
-                if len(category_data) > 5:
-                    field_value += f"...and {len(category_data) - 5} more."
-
-                embed.add_field(
-                    name=f"__**{display_name}**__",
-                    value=field_value if field_value else "No items in this category.",
-                    inline=True
-                )
-
-        if not found_any_stock:
-            embed.description = "No stock information available across any categories at this time."
-
-
+        embed = create_stock_embed(all_stock_data, title="Comprehensive Stock Overview")
         await ctx.send(embed=embed)
     except Exception as e:
         print(f"Error in !stockall command: {e}")
@@ -251,7 +222,7 @@ async def get_stock_by_category(ctx, category: str = None):
 
     try:
         await ctx.send(f"Fetching {category} stock information... please wait a moment.")
-        all_stock_data = await fetch_stock_data()
+        all_stock_data = await fetch_api_data(STOCK_API_URL)
         if not all_stock_data:
             await ctx.send("Apologies, I couldn't retrieve stock information from the API. It might be down or experiencing issues, or returned no data. Please try again later!")
             return
@@ -263,7 +234,31 @@ async def get_stock_by_category(ctx, category: str = None):
             await ctx.send(f"Currently, there are no `{category}` stock items available.")
             return
 
-        embed = create_stock_embed(filtered_stock_data, title=f"Current {category.capitalize()} Stock")
+        # This embed only displays the specified category, which is correct for !stock <category>
+        embed = discord.Embed(
+            title=f"Current {category.capitalize()} Stock",
+            color=discord.Color.green(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000")
+
+        # Display up to 5 items to keep the embed concise, or you can adjust this.
+        for item in filtered_stock_data:
+            item_name = item.get('name', 'N/A')
+            item_quantity = item.get('value', 'N/A')
+            item_image = item.get('image')
+            item_emoji = item.get('emoji', '')
+
+            field_value = f"Quantity: {item_quantity}"
+
+            if item_image and isinstance(item_image, str) and not embed.thumbnail:
+                embed.set_thumbnail(url=item_image)
+
+            embed.add_field(
+                name=f"{item_name} {item_emoji}",
+                value=field_value,
+                inline=True
+            )
         await ctx.send(embed=embed)
     except Exception as e:
         print(f"Error in !stock command for category '{category}': {e}")
@@ -328,7 +323,7 @@ async def autostock_checker():
     if not AUTOSTOCK_ENABLED or AUTOSTOCK_CHANNEL_ID is None:
         return
 
-    current_stock_data = await fetch_stock_data()
+    current_stock_data = await fetch_api_data(STOCK_API_URL)
 
     if current_stock_data is None:
         print("Autostock: Failed to fetch current stock data. Skipping update for this cycle.")
@@ -347,7 +342,9 @@ async def autostock_checker():
             if isinstance(items_list, list):
                 for item in items_list:
                     # Convert each item dict to a frozenset of its key-value pairs for hashability
-                    normalized_items.append(frozenset(item.items()))
+                    # Exclude 'image' and 'emoji' from comparison as they don't signify a stock change
+                    comparable_item = {k: v for k, v in item.items() if k not in ['image', 'emoji']}
+                    normalized_items.append(frozenset(comparable_item.items()))
         return frozenset(normalized_items)
 
     normalized_current = normalize_full_stock_data(current_stock_data)
@@ -357,20 +354,24 @@ async def autostock_checker():
     if LAST_STOCK_DATA is None or normalized_current != normalized_last:
         channel = bot.get_channel(AUTOSTOCK_CHANNEL_ID)
         if channel:
-            # For autostock, we'll send updates about 'seedsStock' for now.
-            # If you want updates for ALL categories, you'd need a more complex embed or multiple embeds.
-            seeds_for_embed = current_stock_data.get('seedsStock', [])
-            embed = create_stock_embed(seeds_for_embed, title="New Seed Stock Update!")
+            # Create a single embed for all relevant stock types
+            embed = create_stock_embed(current_stock_data, title="New Shop Stock Update!")
             try:
                 await channel.send(embed=embed)
-                print(f"Autostock: New seed stock detected and sent to channel {channel.name} ({channel.id}).")
+                print(f"Autostock: New stock detected and sent to channel {channel.name} ({channel.id}).")
 
-                # Log the stock change
+                # Log the stock change (can be expanded to log more details)
                 stock_time = datetime.now()
-                # Get seed names for logging from the 'seedsStock' list
-                seed_names = [item.get('name', 'Unknown Seed') for item in seeds_for_embed]
-                seeds_in_stock_str = ", ".join(seed_names) if seed_names else "No seeds in stock"
-                STOCK_LOGS.append({'time': stock_time, 'seeds_in_stock': seeds_in_stock_str})
+                # Get names for logging from a few categories
+                log_details = []
+                for cat_key in ['seedsStock', 'eggStock', 'gearStock', 'cosmeticsStock', 'honeyStock']:
+                    items = current_stock_data.get(cat_key, [])
+                    if items:
+                        item_names = [item.get('name', 'Unknown') for item in items]
+                        log_details.append(f"{cat_key.replace('Stock', '').capitalize()}: {', '.join(item_names)}")
+                
+                log_entry = " | ".join(log_details) if log_details else "No new stock items detected for log."
+                STOCK_LOGS.append({'time': stock_time, 'details': log_entry})
 
                 # Keep only the last 10 logs (or adjust as needed)
                 if len(STOCK_LOGS) > 10:
@@ -416,10 +417,136 @@ async def restock_logs(ctx):
     for log in reversed(STOCK_LOGS):
         time_str = log['time'].strftime("%Y-%m-%d %H:%M:%S UTC")
         embed.add_field(
-            name=f"Changed at {time_str}",
-            value=f"Seeds in stock: `{log['seeds_in_stock']}`",
+            name=f"Change detected at {time_str}",
+            value=f"{log['details']}",
             inline=False
         )
+    await ctx.send(embed=embed)
+
+@bot.command(name="Restock")
+@commands.cooldown(1, 10, commands.BucketType.channel)
+async def next_restock_time(ctx):
+    """
+    Shows the next planned restock time.
+    Usage: !Restock
+    """
+    try:
+        await ctx.send("Fetching next restock time... please wait a moment.")
+        restock_data = await fetch_api_data(RESTOCK_TIME_API_URL)
+
+        if not restock_data or 'timeUntilRestock' not in restock_data:
+            await ctx.send("Apologies, I couldn't retrieve the next restock time. The API might be down or returned no data.")
+            return
+
+        time_until_restock = restock_data['timeUntilRestock']
+        human_readable_time = restock_data.get('humanReadableTime', 'N/A')
+
+        embed = discord.Embed(
+            title="Next Restock Time",
+            description=f"The shop will restock in approximately: `{human_readable_time}`",
+            color=discord.Color.gold(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000")
+        await ctx.send(embed=embed)
+
+    except Exception as e:
+        print(f"Error in !Restock command: {e}")
+        embed = discord.Embed(
+            title="Error",
+            description=f"An unexpected error occurred while processing the `!Restock` command: `{e}`",
+            color=discord.Color.red(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000")
+        await ctx.send(embed=embed)
+
+# --- Weather Command ---
+@bot.command(name="weather")
+@commands.cooldown(1, 15, commands.BucketType.channel) # Cooldown to prevent API spam
+async def get_weather(ctx):
+    """
+    Displays current weather information.
+    Usage: !weather
+    """
+    try:
+        await ctx.send("Fetching weather information... please wait a moment.")
+        weather_data = await fetch_api_data(WEATHER_API_URL)
+
+        if not weather_data:
+            await ctx.send("Apologies, I couldn't retrieve weather information from the API. It might be down or experiencing issues, or returned no data. Please try again later!")
+            return
+
+        # Extracting data, handling potential missing keys
+        location = weather_data.get('location', 'Unknown Location')
+        temperature = weather_data.get('temperature', 'N/A')
+        description = weather_data.get('description', 'N/A')
+        humidity = weather_data.get('humidity', 'N/A')
+        wind_speed = weather_data.get('windSpeed', 'N/A')
+        icon_url = weather_data.get('icon', None) # Assuming 'icon' is a URL to an image
+
+        embed = discord.Embed(
+            title=f"Current Weather in {location}",
+            description=f"**Conditions:** {description.capitalize()}",
+            color=discord.Color.blue(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(name="Temperature", value=f"`{temperature}°F`", inline=True)
+        embed.add_field(name="Humidity", value=f"`{humidity}%`", inline=True)
+        embed.add_field(name="Wind Speed", value=f"`{wind_speed} mph`", inline=True)
+
+        if icon_url:
+            embed.set_thumbnail(url=icon_url)
+
+        embed.set_footer(text="made by summers 2000")
+        await ctx.send(embed=embed)
+
+    except Exception as e:
+        print(f"Error in !weather command: {e}")
+        embed = discord.Embed(
+            title="Error",
+            description=f"An unexpected error occurred while processing the `!weather` command: `{e}`",
+            color=discord.Color.red(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000")
+        await ctx.send(embed=embed)
+
+# --- Uptime Command ---
+@bot.command(name="uptime")
+async def uptime_command(ctx):
+    """
+    Shows how long the bot has been online.
+    Usage: !uptime
+    """
+    global BOT_START_TIME
+    current_time = datetime.utcnow()
+    uptime = current_time - BOT_START_TIME
+
+    days = uptime.days
+    hours = uptime.seconds // 3600
+    minutes = (uptime.seconds % 3600) // 60
+    seconds = uptime.seconds % 60
+
+    uptime_string = []
+    if days > 0:
+        uptime_string.append(f"{days} day{'s' if days != 1 else ''}")
+    if hours > 0:
+        uptime_string.append(f"{hours} hour{'s' if hours != 1 else ''}")
+    if minutes > 0:
+        uptime_string.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
+    if seconds > 0 or not uptime_string: # Include seconds if less than a minute, or if uptime is very short
+        uptime_string.append(f"{seconds} second{'s' if seconds != 1 else ''}")
+
+    final_uptime = ", ".join(uptime_string)
+
+    embed = discord.Embed(
+        title="Bot Uptime",
+        description=f"I have been online for: `{final_uptime}`",
+        color=discord.Color.purple(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
 
 
@@ -462,6 +589,43 @@ async def ban_command(ctx, member: discord.Member, *, reason: str = "No reason p
         await ctx.send("I don't have sufficient permissions to ban this user. Make sure my role is higher than theirs and I have the 'Ban Members' permission.")
     except Exception as e:
         await ctx.send(f"An unexpected error occurred while trying to ban **{member.display_name}**: `{e}`")
+
+@bot.command(name="unban")
+@commands.has_permissions(ban_members=True)
+@commands.bot_has_permissions(ban_members=True)
+async def unban_command(ctx, *, user_id: int):
+    """
+    Unbans a user by their ID.
+    Usage: !unban <user_id>
+    """
+    try:
+        user = discord.Object(id=user_id) # Create a partial user object from ID
+        await ctx.guild.unban(user)
+
+        # Try to fetch user details to display in embed
+        try:
+            unbanned_user = await bot.fetch_user(user_id)
+            user_name = unbanned_user.name
+            user_mention = unbanned_user.mention
+        except discord.NotFound:
+            user_name = f"User ID {user_id}"
+            user_mention = f"<@{user_id}>"
+
+        embed = discord.Embed(
+            title="Member Unbanned",
+            description=f"Successfully unbanned **{user_name}** ({user_mention}).",
+            color=discord.Color.green(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000")
+        await ctx.send(embed=embed)
+    except discord.NotFound:
+        await ctx.send(f"User with ID `{user_id}` is not found in the ban list.")
+    except discord.Forbidden:
+        await ctx.send("I don't have sufficient permissions to unban users. Make sure I have the 'Ban Members' permission.")
+    except Exception as e:
+        await ctx.send(f"An unexpected error occurred while trying to unban `{user_id}`: `{e}`")
+
 
 @bot.command(name="kick")
 @commands.has_permissions(kick_members=True)
@@ -695,13 +859,15 @@ async def help_command(ctx):
         f"`!stock <category>`: Shows stock for a specific category. (e.g., `!stock seeds`)\n"
         f"Available categories: `seeds`, `eggs`, `bees`, `cosmetics`, `gear`, `honey`, `night`\n"
         f"`!autostock <on/off>`: Toggles automatic stock updates to the current channel.\n"
-        f"`!restocklogs`: Shows recent stock change history."
+        f"`!restocklogs`: Shows recent stock change history.\n"
+        f"`!Restock`: Shows the next planned restock time."
     )
     embed.add_field(name="__Stock & Auto-Stock Commands__", value=stock_commands_desc, inline=False)
 
     # --- Moderation Commands ---
     moderation_commands_desc = (
         f"`!ban <@user> [reason]`: Bans a member from the server.\n"
+        f"`!unban <user_id>`: Unbans a user by their ID.\n"
         f"`!kick <@user> [reason]`: Kicks a member from the server.\n"
         f"`!mute <@user> [duration_minutes] [reason]`: Mutes a member. Requires a 'Muted' role.\n"
         f"`!unmute <@user>`: Unmutes a member.\n"
@@ -710,7 +876,446 @@ async def help_command(ctx):
     )
     embed.add_field(name="__Moderation Commands__", value=moderation_commands_desc, inline=False)
 
+    # --- Utility Commands ---
+    utility_commands_desc = (
+        f"`!weather`: Displays current weather information.\n"
+        f"`!uptime`: Shows how long the bot has been online.\n"
+        f"`!cmds` (or `!commands`, `!help`): Displays this help message."
+    )
+    embed.add_field(name="__Utility Commands__", value=utility_commands_desc, inline=False)
+
+    # --- Game Commands ---
+    game_commands_desc = (
+        f"`!c4 <@opponent>`: Starts a game of Connect4.\n"
+        f"`!tictactoe <@opponent>`: Starts a game of Tic-Tac-Toe."
+    )
+    embed.add_field(name="__Game Commands__", value=game_commands_desc, inline=False)
+
+
     await ctx.send(embed=embed)
+
+
+# --- Connect4 Game Implementation ---
+
+# Emojis for Connect4
+C4_EMPTY = '\u2B1C'  # White Square
+C4_RED = '\U0001F534'    # Red Circle
+C4_YELLOW = '\U0001F7E1' # Yellow Circle
+C4_NUMBERS = ['1\u20E3', '2\u20E3', '3\u20E3', '4\u20E3', '5\u20E3', '6\u20E3', '7\u20E3']
+
+class Connect4Game:
+    def __init__(self, player1, player2):
+        self.board = [[C4_EMPTY for _ in range(7)] for _ in range(6)] # 6 rows, 7 columns
+        self.players = {C4_RED: player1, C4_YELLOW: player2}
+        self.player_emojis = {player1.id: C4_RED, player2.id: C4_YELLOW}
+        self.current_turn_emoji = C4_RED
+        self.message = None # To store the Discord message object for updating
+        self.winner = None
+        self.draw = False
+        self.last_move = None # (row, col) of last piece dropped
+
+    def _render_board(self):
+        board_str = ""
+        for row in self.board:
+            board_str += "".join(row) + "\n"
+        board_str += "".join(C4_NUMBERS) # Add column numbers at the bottom
+        return board_str
+
+    def _check_win(self):
+        directions = [(0, 1), (1, 0), (1, 1), (1, -1)] # Horizontal, Vertical, Diagonal (positive), Diagonal (negative)
+        last_row, last_col = self.last_move
+        piece = self.board[last_row][last_col]
+
+        # Check all 4 directions from the last placed piece
+        for dr, dc in directions:
+            for i in range(-3, 1): # Check 4-in-a-row starting from up to 3 positions behind current
+                r_start, c_start = last_row + dr * i, last_col + dc * i
+                count = 0
+                for j in range(4): # Check 4 pieces in this direction
+                    r, c = r_start + dr * j, c_start + dc * j
+                    if 0 <= r < 6 and 0 <= c < 7 and self.board[r][c] == piece:
+                        count += 1
+                        if count == 4:
+                            return True
+                    else:
+                        break # Break if sequence is interrupted
+        return False
+
+
+    def _check_draw(self):
+        for r in range(6):
+            for c in range(7):
+                if self.board[r][c] == C4_EMPTY:
+                    return False # If any empty spot, not a draw
+        return True # All spots filled, no winner
+
+    def drop_piece(self, col):
+        if not (0 <= col < 7):
+            return False, "Invalid column number."
+        if self.board[0][col] != C4_EMPTY: # Top of column is not empty
+            return False, "Column is full."
+
+        for r in range(5, -1, -1): # Start from bottom row
+            if self.board[r][col] == C4_EMPTY:
+                self.board[r][col] = self.current_turn_emoji
+                self.last_move = (r, col)
+                return True, ""
+        return False, "An unexpected error occurred dropping the piece." # Should not happen if column not full
+
+    def switch_turn(self):
+        self.current_turn_emoji = C4_YELLOW if self.current_turn_emoji == C4_RED else C4_RED
+
+    async def update_game_message(self):
+        player_red = self.players[C4_RED]
+        player_yellow = self.players[C4_YELLOW]
+        turn_player = self.players[self.current_turn_emoji]
+
+        embed = discord.Embed(
+            title="Connect4!",
+            description=f"{player_red.display_name} {C4_RED} vs {player_yellow.display_name} {C4_YELLOW}\n\n"
+                        f"{self._render_board()}",
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text="made by summers 2000")
+
+        if self.winner:
+            winner_player = self.players[self.winner]
+            embed.add_field(name="Game Over!", value=f"{winner_player.display_name} {self.winner} wins!", inline=False)
+            embed.color = discord.Color.green()
+        elif self.draw:
+            embed.add_field(name="Game Over!", value="It's a draw!", inline=False)
+            embed.color = discord.Color.greyple()
+        else:
+            embed.add_field(name="Current Turn", value=f"{turn_player.display_name} {self.current_turn_emoji}'s turn!", inline=False)
+
+        if self.message:
+            await self.message.edit(embed=embed)
+
+
+@bot.command(name="c4")
+@commands.guild_only()
+async def connect_four(ctx, opponent: discord.Member):
+    """
+    Starts a Connect4 game against another player.
+    Usage: !c4 <@opponent>
+    """
+    if ctx.channel.id in active_c4_games:
+        return await ctx.send("A Connect4 game is already active in this channel. Please finish it or start a new one elsewhere.")
+    if opponent.bot:
+        return await ctx.send("You cannot play Connect4 against a bot.")
+    if opponent == ctx.author:
+        return await ctx.send("You cannot play Connect4 against yourself!")
+
+    player1 = ctx.author
+    player2 = opponent
+
+    game = Connect4Game(player1, player2)
+    active_c4_games[ctx.channel.id] = game
+
+    # Initial message for the game
+    embed = discord.Embed(
+        title="Connect4!",
+        description=f"{player1.display_name} {C4_RED} vs {player2.display_name} {C4_YELLOW}\n\n"
+                    f"{game._render_board()}",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="Current Turn", value=f"{player1.display_name} {C4_RED}'s turn!", inline=False)
+    embed.set_footer(text="made by summers 2000")
+
+    game_message = await ctx.send(embed=embed)
+    game.message = game_message
+
+    # Add reactions for columns
+    for emoji in C4_NUMBERS:
+        await game_message.add_reaction(emoji)
+
+    await ctx.send(f"Connect4 game started between {player1.mention} and {player2.mention}! "
+                   f"Use the reactions below the board to make your move.")
+
+@bot.event
+async def on_reaction_add(reaction, user):
+    if user.bot:
+        return # Ignore bot's own reactions
+
+    channel_id = reaction.message.channel.id
+    
+    # Handle Connect4 reactions
+    if channel_id in active_c4_games:
+        game = active_c4_games[channel_id]
+
+        if reaction.message.id != game.message.id:
+            return # Not the current game message
+
+        # Check if it's the correct player's turn
+        expected_player = game.players[game.current_turn_emoji]
+        if user.id != expected_player.id:
+            # Optionally remove reaction if not their turn
+            try:
+                await reaction.remove(user)
+            except discord.Forbidden:
+                pass # Bot might not have permission
+            return
+
+        # Check if game is already over
+        if game.winner or game.draw:
+            try:
+                await reaction.remove(user)
+            except discord.Forbidden:
+                pass
+            return
+
+        # Determine the column from reaction
+        if reaction.emoji in C4_NUMBERS:
+            col = C4_NUMBERS.index(reaction.emoji)
+            success, error_msg = game.drop_piece(col)
+
+            if success:
+                # Remove all reactions to prevent spam/re-use (and re-add them after turn)
+                try:
+                    await reaction.message.clear_reactions()
+                except discord.Forbidden:
+                    pass # Bot might not have permission
+
+                if game._check_win():
+                    game.winner = game.current_turn_emoji
+                    await game.update_game_message()
+                    del active_c4_games[channel_id] # Game over, remove from active games
+                    await reaction.message.channel.send(f"Congratulations, {user.mention}! You won the Connect4 game!")
+                elif game._check_draw():
+                    game.draw = True
+                    await game.update_game_message()
+                    del active_c4_games[channel_id]
+                    await reaction.message.channel.send("The Connect4 game is a draw!")
+                else:
+                    game.switch_turn()
+                    await game.update_game_message()
+                    # Re-add reactions for the next turn
+                    for emoji in C4_NUMBERS:
+                        await game.message.add_reaction(emoji)
+            else:
+                # If drop failed (e.g., column full), remove player's reaction
+                try:
+                    await reaction.remove(user)
+                except discord.Forbidden:
+                    pass
+                await reaction.message.channel.send(f"{user.mention}, {error_msg} Please choose another column.", delete_after=5)
+        else:
+            # If invalid emoji, remove reaction
+            try:
+                await reaction.remove(user)
+            except discord.Forbidden:
+                pass
+            return
+    
+    # Handle Tic-Tac-Toe reactions
+    elif channel_id in active_tictactoe_games:
+        await handle_tictactoe_reaction(reaction, user)
+
+# --- Tic-Tac-Toe Game Implementation ---
+
+# Emojis for Tic-Tac-Toe
+TTT_EMPTY = '\u2B1C'  # White Square
+TTT_X = '\u274C'      # Red X
+TTT_O = '\u2B55'      # Large Blue Circle (for O)
+TTT_NUMBERS = ['1\u20E3', '2\u20E3', '3\u20E3', '4\u20E3', '5\u20E3', '6\u20E3', '7\u20E3', '8\u20E3', '9\u20E3']
+
+class TicTacToeGame:
+    def __init__(self, player1, player2):
+        self.board = [[TTT_EMPTY for _ in range(3)] for _ in range(3)] # 3x3 board
+        self.players = {TTT_X: player1, TTT_O: player2}
+        self.player_emojis = {player1.id: TTT_X, player2.id: TTT_O}
+        self.current_turn_emoji = TTT_X
+        self.message = None # To store the Discord message object for updating
+        self.winner = None
+        self.draw = False
+        self.last_player_move = None # Stores the player who made the last valid move
+
+    def _render_board(self):
+        board_str = ""
+        for i, row in enumerate(self.board):
+            board_str += "".join(row)
+            if i < 2:
+                board_str += "\n"
+        return board_str
+
+    def _check_win(self):
+        # Check rows, columns, and diagonals
+        lines = []
+        # Rows
+        for r in range(3):
+            lines.append(self.board[r])
+        # Columns
+        for c in range(3):
+            lines.append([self.board[r][c] for r in range(3)])
+        # Diagonals
+        lines.append([self.board[i][i] for i in range(3)])
+        lines.append([self.board[i][2-i] for i in range(3)])
+
+        for line in lines:
+            if line[0] != TTT_EMPTY and all(x == line[0] for x in line):
+                self.winner = line[0]
+                return True
+        return False
+
+    def _check_draw(self):
+        if self.winner: return False # Can't be a draw if there's a winner
+        for r in range(3):
+            for c in range(3):
+                if self.board[r][c] == TTT_EMPTY:
+                    return False # If any empty spot, not a draw
+        return True # All spots filled, no winner
+
+    def make_move(self, position): # position is 1-9
+        row = (position - 1) // 3
+        col = (position - 1) % 3
+
+        if not (0 <= row < 3 and 0 <= col < 3):
+            return False, "Invalid position."
+        if self.board[row][col] != TTT_EMPTY:
+            return False, "That spot is already taken."
+
+        self.board[row][col] = self.current_turn_emoji
+        return True, ""
+
+    def switch_turn(self):
+        self.current_turn_emoji = TTT_O if self.current_turn_emoji == TTT_X else TTT_X
+
+    async def update_game_message(self):
+        player_x = self.players[TTT_X]
+        player_o = self.players[TTT_O]
+        turn_player = self.players[self.current_turn_emoji]
+
+        embed = discord.Embed(
+            title="Tic-Tac-Toe!",
+            description=f"{player_x.display_name} {TTT_X} vs {player_o.display_name} {TTT_O}\n\n"
+                        f"{self._render_board()}",
+            color=discord.Color.purple()
+        )
+        embed.set_footer(text="made by summers 2000")
+
+        if self.winner:
+            winner_player = self.players[self.winner]
+            embed.add_field(name="Game Over!", value=f"{winner_player.display_name} {self.winner} wins!", inline=False)
+            embed.color = discord.Color.green()
+        elif self.draw:
+            embed.add_field(name="Game Over!", value="It's a draw!", inline=False)
+            embed.color = discord.Color.greyple()
+        else:
+            embed.add_field(name="Current Turn", value=f"{turn_player.display_name} {self.current_turn_emoji}'s turn!", inline=False)
+
+        if self.message:
+            await self.message.edit(embed=embed)
+
+
+@bot.command(name="tictactoe")
+@commands.guild_only()
+async def tictactoe_game(ctx, opponent: discord.Member):
+    """
+    Starts a Tic-Tac-Toe game against another player.
+    Usage: !tictactoe <@opponent>
+    """
+    if ctx.channel.id in active_tictactoe_games:
+        return await ctx.send("A Tic-Tac-Toe game is already active in this channel. Please finish it or start a new one elsewhere.")
+    if opponent.bot:
+        return await ctx.send("You cannot play Tic-Tac-Toe against a bot.")
+    if opponent == ctx.author:
+        return await ctx.send("You cannot play Tic-Tac-Toe against yourself!")
+
+    player1 = ctx.author
+    player2 = opponent
+
+    game = TicTacToeGame(player1, player2)
+    active_tictactoe_games[ctx.channel.id] = game
+
+    # Initial message for the game
+    embed = discord.Embed(
+        title="Tic-Tac-Toe!",
+        description=f"{player1.display_name} {TTT_X} vs {player2.display_name} {TTT_O}\n\n"
+                    f"{game._render_board()}",
+        color=discord.Color.purple()
+    )
+    embed.add_field(name="Current Turn", value=f"{player1.display_name} {TTT_X}'s turn!", inline=False)
+    embed.set_footer(text="made by summers 2000")
+
+    game_message = await ctx.send(embed=embed)
+    game.message = game_message
+
+    # Add reactions for positions 1-9
+    for emoji in TTT_NUMBERS:
+        await game_message.add_reaction(emoji)
+
+    await ctx.send(f"Tic-Tac-Toe game started between {player1.mention} and {player2.mention}! "
+                   f"Use the reactions below the board to make your move.")
+
+
+async def handle_tictactoe_reaction(reaction, user):
+    channel_id = reaction.message.channel.id
+    if channel_id in active_tictactoe_games:
+        game = active_tictactoe_games[channel_id]
+
+        if reaction.message.id != game.message.id:
+            return # Not the current game message
+
+        # Check if it's the correct player's turn
+        expected_player = game.players[game.current_turn_emoji]
+        if user.id != expected_player.id:
+            try:
+                await reaction.remove(user)
+            except discord.Forbidden:
+                pass
+            return
+
+        # Check if game is already over
+        if game.winner or game.draw:
+            try:
+                await reaction.remove(user)
+            except discord.Forbidden:
+                pass
+            return
+
+        # Determine the position from reaction
+        if reaction.emoji in TTT_NUMBERS:
+            position = TTT_NUMBERS.index(reaction.emoji) + 1 # Convert 0-indexed to 1-indexed
+            success, error_msg = game.make_move(position)
+
+            if success:
+                # Remove all reactions to prevent spam/re-use (and re-add them after turn)
+                try:
+                    await reaction.message.clear_reactions()
+                except discord.Forbidden:
+                    pass
+
+                if game._check_win():
+                    game.winner = game.current_turn_emoji
+                    await game.update_game_message()
+                    del active_tictactoe_games[channel_id] # Game over, remove from active games
+                    await reaction.message.channel.send(f"Congratulations, {user.mention}! You won the Tic-Tac-Toe game!")
+                elif game._check_draw():
+                    game.draw = True
+                    await game.update_game_message()
+                    del active_tictactoe_games[channel_id]
+                    await reaction.message.channel.send("The Tic-Tac-Toe game is a draw!")
+                else:
+                    game.switch_turn()
+                    await game.update_game_message()
+                    # Re-add reactions for the next turn
+                    for emoji in TTT_NUMBERS:
+                        await game.message.add_reaction(emoji)
+            else:
+                # If move failed (e.g., spot taken), remove player's reaction
+                try:
+                    await reaction.remove(user)
+                except discord.Forbidden:
+                    pass
+                await reaction.message.channel.send(f"{user.mention}, {error_msg} Please choose another spot.", delete_after=5)
+        else:
+            # If invalid emoji, remove reaction
+            try:
+                await reaction.remove(user)
+            except discord.Forbidden:
+                pass
+            return
+
 
 # --- Run the Bot ---
 # Get the bot token from an environment variable (e.g., DISCORD_TOKEN in Railway)
