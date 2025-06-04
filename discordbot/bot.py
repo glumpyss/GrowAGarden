@@ -200,6 +200,15 @@ async def on_command_error(ctx, error):
         await ctx.send("This command can only be used in a server channel, not in DMs.")
     elif isinstance(error, commands.CommandOnCooldown):
         await ctx.send(f"This command is on cooldown. Please try again in `{error.retry_after:.1f}` seconds.")
+    elif isinstance(error, commands.CheckFailure): # Handle custom permission/role checks
+        embed = discord.Embed(
+            title="Permission Denied",
+            description=f"You do not have the necessary permissions or role to use the `!{ctx.command.name}` command.",
+            color=discord.Color.red(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000")
+        await ctx.send(embed=embed, delete_after=10)
     else:
         print(f"An unhandled error occurred in command '{ctx.command.name}': {error}")
         embed = discord.Embed(
@@ -1052,7 +1061,7 @@ async def seed_stock_dm_toggle(ctx):
 
 # --- Roblox Username Lookup Command ---
 @bot.command(name="rblxusername")
-@commands.has_permissions(manage_roles=True) # Requires "Manage Roles" permission
+@commands.check_any(commands.has_permissions(manage_roles=True), commands.has_role(1302076375922118696))
 @commands.bot_has_permissions(send_messages=True, embed_links=True) # Bot needs to send messages and embeds
 async def rblxusername(ctx, *, username: str):
     """
@@ -1061,18 +1070,8 @@ async def rblxusername(ctx, *, username: str):
     date joined, following, display name, and about me.
     Usage: !rblxusername <Roblox Username>
     """
-    # Check for the specific role ID
-    required_role = discord.utils.get(ctx.author.roles, id=1302076375922118696)
-    if not required_role:
-        embed = discord.Embed(
-            title="Permission Denied",
-            description=f"You need the role with ID `{1302076375922118696}` to use this command.",
-            color=discord.Color.red(),
-            timestamp=datetime.utcnow()
-        )
-        embed.set_footer(text="made by summers 2000")
-        await ctx.send(embed=embed, delete_after=10)
-        return
+    # The permission check is now handled by the decorators above.
+    # No need for manual role check here.
 
     await ctx.send(f"Searching for Roblox user '{username}'... please wait.")
 
@@ -1126,14 +1125,6 @@ async def rblxusername(ctx, *, username: str):
         # For simple counts, we might need to hit specific endpoints or infer.
         # For this example, we'll use simplified endpoints if available or default to N/A.
         # The profile_data usually contains some basic info.
-        
-        # Roblox API for friends/followers count is not directly on the user profile endpoint.
-        # It requires separate API calls, which can be rate-limited.
-        # For simplicity, we'll use placeholder or indicate if not directly available.
-        # If you need exact counts, you'd typically hit:
-        # - https://friends.roblox.com/v1/users/{userId}/followers/count
-        # - https://friends.roblox.com/v1/users/{userId}/followings/count
-        # - https://friends.roblox.com/v1/users/{userId}/friends/count
         
         # Let's try to fetch these counts if possible
         followers_count = "N/A"
@@ -1642,7 +1633,6 @@ try:
 except discord.LoginFailure:
     print("\n!!! LOGIN FAILED: Invalid token or connection issue. !!!")
     print("Please check your DISCORD_TOKEN environment variable in Railway. It might be incorrect or expired.")
-    print("If you recently reset your token, make sure you updated it in Railway.")
 except discord.HTTPException as e:
     print(f"\n!!! HTTP EXCEPTION DURING LOGIN: {e} !!!")
     print("This often indicates a problem with Discord's API or your network connection.")
