@@ -673,9 +673,6 @@ async def clear_messages(ctx, amount: int):
     except Exception as e:
         await ctx.send(f"An unexpected error occurred while trying to clear messages: `{e}`")
 
----
-### New Help Command!
----
 
 @bot.command(name="help", aliases=["commands"])
 async def help_command(ctx):
