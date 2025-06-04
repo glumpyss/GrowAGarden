@@ -25,7 +25,7 @@ AUTOSTOCK_ENABLED = False
 LAST_STOCK_DATA = None # Will store the full dictionary response
 STOCK_API_URL = "https://growagardenapi.vercel.app/api/stock/GetStock"
 RESTOCK_TIME_API_URL = "https://growagardenapi.vercel.app/api/stock/Restock-Time"
-WEATHER_API_URL = "https://growagardenapi.vercel.app/api/GetWeather"
+WEATHER_API_URL = "https://growagardenapi.vercel.app/api/GetWeather" # This is assumed to be the in-game weather API
 
 # AUTOSTOCK_CHANNEL_ID will be set dynamically when the !autostock on command is used.
 AUTOSTOCK_CHANNEL_ID = None
@@ -423,12 +423,12 @@ async def restock_logs(ctx):
         )
     await ctx.send(embed=embed)
 
-@bot.command(name="Restock")
+@bot.command(name="restock") # Changed to lowercase !restock
 @commands.cooldown(1, 10, commands.BucketType.channel)
 async def next_restock_time(ctx):
     """
     Shows the next planned restock time.
-    Usage: !Restock
+    Usage: !restock
     """
     try:
         await ctx.send("Fetching next restock time... please wait a moment.")
@@ -451,10 +451,10 @@ async def next_restock_time(ctx):
         await ctx.send(embed=embed)
 
     except Exception as e:
-        print(f"Error in !Restock command: {e}")
+        print(f"Error in !restock command: {e}")
         embed = discord.Embed(
             title="Error",
-            description=f"An unexpected error occurred while processing the `!Restock` command: `{e}`",
+            description=f"An unexpected error occurred while processing the `!restock` command: `{e}`",
             color=discord.Color.red(),
             timestamp=datetime.utcnow()
         )
@@ -466,11 +466,11 @@ async def next_restock_time(ctx):
 @commands.cooldown(1, 15, commands.BucketType.channel) # Cooldown to prevent API spam
 async def get_weather(ctx):
     """
-    Displays current weather information.
+    Displays current weather information from the Grow A Garden in-game API.
     Usage: !weather
     """
     try:
-        await ctx.send("Fetching weather information... please wait a moment.")
+        await ctx.send("Fetching in-game weather information... please wait a moment.")
         weather_data = await fetch_api_data(WEATHER_API_URL)
 
         if not weather_data:
@@ -486,7 +486,7 @@ async def get_weather(ctx):
         icon_url = weather_data.get('icon', None) # Assuming 'icon' is a URL to an image
 
         embed = discord.Embed(
-            title=f"Current Weather in {location}",
+            title=f"Current In-Game Weather in {location}", # Updated title for clarity
             description=f"**Conditions:** {description.capitalize()}",
             color=discord.Color.blue(),
             timestamp=datetime.utcnow()
@@ -836,7 +836,7 @@ async def clear_messages(ctx, amount: int):
         else:
             await ctx.send(f"An API error occurred while trying to clear messages: `{e}`")
     except Exception as e:
-        await ctx.send(f"An unexpected error occurred while trying to clear messages: `{e}`")
+        await ctx.send(f"An unexpected error occurred while trying to clear messages: `{e}")
 
 
 @bot.command(name="cmds", aliases=["commands", "help"])
@@ -860,7 +860,7 @@ async def help_command(ctx):
         f"Available categories: `seeds`, `eggs`, `bees`, `cosmetics`, `gear`, `honey`, `night`\n"
         f"`!autostock <on/off>`: Toggles automatic stock updates to the current channel.\n"
         f"`!restocklogs`: Shows recent stock change history.\n"
-        f"`!Restock`: Shows the next planned restock time."
+        f"`!restock`: Shows the next planned restock time." # Changed to !restock
     )
     embed.add_field(name="__Stock & Auto-Stock Commands__", value=stock_commands_desc, inline=False)
 
