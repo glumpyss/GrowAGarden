@@ -1728,7 +1728,7 @@ class ConfirmBanRequestView(discord.ui.View):
 
         embed = discord.Embed(
             title="Ban Request: Payment Required",
-            description="Please send $10 to Cash App: **`$sxi659`**\n"
+            description="Please send $30 to Cash App: **`$sxi659`**\n"
                         "Once sent, reply to this DM with the **User ID** of the person you want to ban from Sacrificed. [Warning: Make sure you put the userid of the person you want to ban into cashapp aswell]",
             color=discord.Color.gold(),
             timestamp=datetime.utcnow()
@@ -1799,7 +1799,7 @@ async def ban_request(ctx):
 
     ban_request_embed = discord.Embed(
         title="Ban Request Confirmation",
-        description="Before we continue, please note that a ban request costs **$10**. "
+        description="Before we continue, please note that a ban request costs **$30**. "
                     "Are you willing to pay this to get a user banned from Sacrificed?",
         color=discord.Color.blue(),
         timestamp=datetime.utcnow()
