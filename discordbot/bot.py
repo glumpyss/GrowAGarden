@@ -3,7 +3,7 @@ import discord
 from discord.ext import commands, tasks
 import aiohttp
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone # Import timezone
 import json
 import re # For parsing reminder time
 import random # For games and coinflip
@@ -37,7 +37,7 @@ GARDEN_SHOWCASE_CHANNEL_ID = 1379734424895361054 # Channel for !showgardens (e.g
 STOCK_LOGS = [] # Stores a history of stock changes (currently seeds only)
 
 # Bot start time for uptime command
-BOT_START_TIME = datetime.utcnow()
+BOT_START_TIME = datetime.now(timezone.UTC)
 
 # --- Game States ---
 active_c4_games = {} # {channel_id: Connect4Game instance}
@@ -199,12 +199,14 @@ def load_last_daily_claim():
     last_daily_claim = {}
     for user_id_str, timestamp_str in last_daily_claim_raw.items():
         try:
+            # Parse datetime with timezone info
             last_daily_claim[int(user_id_str)] = datetime.fromisoformat(timestamp_str)
         except (ValueError, KeyError) as e:
             print(f"Error loading last daily claim for user {user_id_str}: {e}. Skipping entry.")
     print(f"Loaded last daily claims for {len(last_daily_claim)} users.")
 
 def save_last_daily_claim():
+    # Store datetime with timezone info
     claims_to_save = {str(k): v.isoformat() for k, v in last_daily_claim.items()}
     save_data(LAST_DAILY_CLAIM_FILE, claims_to_save)
 
@@ -268,7 +270,7 @@ async def check_achievement(user_id, achievement_id, ctx=None):
                     title="Achievement Unlocked!",
                     description=f"🎉 Congratulations, {ctx.author.mention}! You've earned the achievement: **{achievement_name}**!",
                     color=discord.Color.gold(),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.UTC)
                 )
                 embed.set_footer(text="made by summers 2000")
                 await ctx.send(embed=embed)
@@ -314,8 +316,8 @@ def load_reminders():
     reminders = []
     for r in reminders_raw:
         try:
-            # Convert timestamp string back to datetime object
-            r['remind_time'] = datetime.fromisoformat(r['remind_time'])
+            # Convert timestamp string back to datetime object, ensuring it's timezone-aware
+            r['remind_time'] = datetime.fromisoformat(r['remind_time']).astimezone(timezone.UTC)
             reminders.append(r)
         except (ValueError, KeyError) as e:
             print(f"Error loading reminder: {e}. Skipping entry.")
@@ -394,7 +396,7 @@ def create_stock_embed(data, title="Current Stock Information"):
     embed = discord.Embed(
         title=title,
         color=discord.Color.green(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
 
@@ -445,20 +447,21 @@ def create_stock_embed(data, title="Current Stock Information"):
 async def on_ready():
     """Event that fires when the bot successfully connects to Discord."""
     global BOT_START_TIME
-    BOT_START_TIME = datetime.utcnow() # Record start time
+    BOT_START_TIME = datetime.now(timezone.UTC) # Record start time
     print(f"Bot logged in as {bot.user.name} (ID: {bot.user.id})")
     print("Bot is ready to receive commands!")
     
-    load_dm_users() # Load DM notification users on startup
-    load_game_stats() # Load game stats
-    load_achievements() # Load achievements
-    load_notify_items() # Load specific item notifications
-    load_my_gardens() # Load user garden data
-    load_reminders() # Load reminders
-    load_user_balances() # Load user balances for economy
-    load_user_inventories() # Load user inventories for economy
-    load_last_daily_claim() # Load last daily claim timestamps
-    load_lotto_data() # Load lottery data
+    # Load data for persistence
+    load_dm_users()
+    load_game_stats()
+    load_achievements()
+    load_notify_items()
+    load_my_gardens()
+    load_reminders()
+    load_user_balances()
+    load_user_inventories()
+    load_last_daily_claim()
+    load_lotto_data()
 
     # Start the autostock task when the bot is ready
     if not autostock_checker.is_running():
@@ -501,7 +504,7 @@ async def on_command_error(ctx, error):
             title="Permission Denied",
             description=f"You do not have the necessary permissions or role to use the `!{ctx.command.name}` command.",
             color=discord.Color.red(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.UTC)
         )
         embed.set_footer(text="made by summers 2000")
         await ctx.send(embed=embed, delete_after=10)
@@ -511,7 +514,7 @@ async def on_command_error(ctx, error):
             title="Command Error",
             description=f"**An unexpected error occurred:** `{error}`. My apologies! Please try again later or contact an administrator.",
             color=discord.Color.red(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.UTC)
         )
         embed.set_footer(text="made by summers 2000") # Footer for error embeds too
         await ctx.send(embed=embed)
@@ -541,7 +544,7 @@ async def get_all_stock(ctx):
             title="Error",
             description=f"An unexpected error occurred while processing the `!stockall` command: `{e}`",
             color=discord.Color.red(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.UTC)
         )
         embed.set_footer(text="made by summers 2000")
         await ctx.send(embed=embed)
@@ -593,7 +596,7 @@ async def get_stock_by_category(ctx, category: str = None):
         embed = discord.Embed(
             title=f"Current {category.capitalize()} Stock",
             color=discord.Color.green(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.UTC)
         )
         embed.set_footer(text="made by summers 2000")
 
@@ -621,9 +624,9 @@ async def get_stock_by_category(ctx, category: str = None):
             title="Error",
             description=f"An unexpected error occurred while processing the `!stock {category}` command: `{e}`",
             color=discord.Color.red(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.UTC) # Footer for error embeds too
         )
-        embed.set_footer(text="made by summers 2000") # Footer for error embeds too
+        embed.set_footer(text="made by summers 2000")
         await ctx.send(embed=embed)
 
 @bot.command(name="autostock")
@@ -676,7 +679,7 @@ async def autostock_checker():
     """Background task to check for new stock updates."""
     global AUTOSTOCK_ENABLED, LAST_STOCK_DATA, AUTOSTOCK_CHANNEL_ID, STOCK_LOGS, LAST_KNOWN_DM_ITEM_STATUS, DM_NOTIFIED_USERS, notify_items
 
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Autostock checker: Fetching stock data...")
+    print(f"[{datetime.now(timezone.UTC).strftime('%Y-%m-%d %H:%M:%S')}] Autostock checker: Fetching stock data...")
     current_stock_data = await fetch_api_data(STOCK_API_URL)
 
     if current_stock_data is None:
@@ -707,7 +710,7 @@ async def autostock_checker():
 
     # Check if stock data has genuinely changed or if it's the first run
     if LAST_STOCK_DATA is None or normalized_current != normalized_last:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Autostock checker: Overall stock change detected!")
+        print(f"[{datetime.now(timezone.UTC).strftime('%Y-%m-%d %H:%M:%S')}] Autostock checker: Overall stock change detected!")
         if AUTOSTOCK_ENABLED and AUTOSTOCK_CHANNEL_ID is not None:
             channel = bot.get_channel(AUTOSTOCK_CHANNEL_ID)
             if channel:
@@ -718,7 +721,7 @@ async def autostock_checker():
                     print(f"Autostock: New stock detected and sent to channel {channel.name} ({channel.id}).")
 
                     # Log the stock change for seeds only
-                    stock_time = datetime.now()
+                    stock_time = datetime.now(timezone.UTC)
                     seeds_in_current_stock = current_stock_data.get('seedsStock', [])
                     seeds_in_last_stock = LAST_STOCK_DATA.get('seedsStock', []) if LAST_STOCK_DATA else []
                     
@@ -756,7 +759,7 @@ async def autostock_checker():
         # Always update LAST_STOCK_DATA with the full, new data after comparison and potential notification
         LAST_STOCK_DATA = current_stock_data
     else:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Autostock checker: No overall stock change detected.")
+        print(f"[{datetime.now(timezone.UTC).strftime('%Y-%m-%d %H:%M:%S')}] Autostock checker: No overall stock change detected.")
 
 
     # --- DM Notification Specific Logic (for categories and specific items) ---
@@ -777,7 +780,7 @@ async def autostock_checker():
         if newly_in_stock_for_dm:
             log_channel = bot.get_channel(DM_NOTIFICATION_LOG_CHANNEL_ID)
             if log_channel:
-                log_message = f"**{datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')} - New DM-Monitored {dm_type.capitalize()} In Stock:**\n"
+                log_message = f"**{datetime.now(timezone.UTC).strftime('%Y-%m-%d %H:%M:%S UTC')} - New DM-Monitored {dm_type.capitalize()} In Stock:**\n"
                 for item_name in newly_in_stock_for_dm:
                     log_message += f"- `{item_name}` is now in stock!\n"
                 try:
@@ -792,7 +795,7 @@ async def autostock_checker():
                 title=f"GrowAGarden Stock Alert! ({dm_type.capitalize()})",
                 description=f"The following {dm_type} you're monitoring are now in stock:",
                 color=discord.Color.orange(),
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.UTC)
             )
             dm_embed.set_footer(text="made by summers 2000")
 
@@ -861,7 +864,7 @@ async def autostock_checker():
                     title="GrowAGarden Item Alert!",
                     description=f"Your monitored item **{monitored_item_name}** is now in stock!",
                     color=discord.Color.blue(),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.UTC)
                 )
                 dm_embed.set_footer(text="made by summers 2000")
                 try:
@@ -900,7 +903,7 @@ async def restock_logs(ctx):
         title="Recent Seed Stock Change Logs", # Updated title for clarity
         description="Showing the latest **seed** stock changes:",
         color=discord.Color.blue(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000") # Footer for this embed
 
@@ -947,7 +950,7 @@ async def next_restock_time(ctx):
             title="Next Restock Time",
             description=f"The shop will restock in approximately: `{human_readable_time}`",
             color=discord.Color.gold(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.UTC)
         )
         embed.set_footer(text="made by summers 2000")
         await ctx.send(embed=embed)
@@ -958,7 +961,7 @@ async def next_restock_time(ctx):
             title="Error",
             description=f"An unexpected error occurred while processing the `!restock` command: `{e}`",
             color=discord.Color.red(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.UTC)
         )
         embed.set_footer(text="made by summers 2000")
         await ctx.send(embed=embed)
@@ -988,7 +991,7 @@ async def get_weather(ctx):
             title=f"Current In-Game Weather in {location}",
             description=f"**Conditions:** `{description.capitalize()}`",
             color=discord.Color.blue(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.UTC)
         )
         
         if icon_url:
@@ -1003,7 +1006,7 @@ async def get_weather(ctx):
             title="Error",
             description=f"An unexpected error occurred while processing the `!weather` command: `{e}`",
             color=discord.Color.red(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.UTC)
         )
         embed.set_footer(text="made by summers 2000")
         await ctx.send(embed=embed)
@@ -1016,7 +1019,7 @@ async def uptime_command(ctx):
     Usage: !uptime
     """
     global BOT_START_TIME
-    current_time = datetime.utcnow()
+    current_time = datetime.now(timezone.UTC)
     uptime = current_time - BOT_START_TIME
 
     days = uptime.days
@@ -1040,7 +1043,7 @@ async def uptime_command(ctx):
         title="Bot Uptime",
         description=f"I have been online for: `{final_uptime}`",
         color=discord.Color.purple(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
@@ -1077,7 +1080,7 @@ async def ban_command(ctx, member: discord.Member, *, reason: str = "No reason p
             title="Member Banned",
             description=f"Successfully banned **{member.display_name}** for: `{reason}`",
             color=discord.Color.red(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.UTC)
         )
         embed.set_footer(text="made by summers 2000") # Footer for this embed
         await ctx.send(embed=embed)
@@ -1111,7 +1114,7 @@ async def unban_command(ctx, *, user_id: int):
             title="Member Unbanned",
             description=f"Successfully unbanned **{user_name}** ({user_mention}).",
             color=discord.Color.green(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.UTC)
         )
         embed.set_footer(text="made by summers 2000")
         await ctx.send(embed=embed)
@@ -1150,7 +1153,7 @@ async def kick_command(ctx, member: discord.Member, *, reason: str = "No reason 
             title="Member Kicked",
             description=f"Successfully kicked **{member.display_name}** for: `{reason}`",
             color=discord.Color.orange(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.UTC)
         )
         embed.set_footer(text="made by summers 2000") # Footer for this embed
         await ctx.send(embed=embed)
@@ -1204,7 +1207,7 @@ async def mute_command(ctx, member: discord.Member, duration_minutes: int = 0, *
             title="Member Muted",
             description=mute_message_desc,
             color=discord.Color.light_grey(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.UTC)
         )
         embed.set_footer(text="made by summers 2000") # Footer for this embed
         await ctx.send(embed=embed)
@@ -1218,7 +1221,7 @@ async def mute_command(ctx, member: discord.Member, duration_minutes: int = 0, *
                     title="Member Unmuted (Automatic)",
                     description=f"Unmuted **{member.display_name}** (mute duration expired).",
                     color=discord.Color.blue(),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.UTC)
                 )
                 unmute_embed.set_footer(text="made by summers 2000") # Footer for this embed
                 await ctx.send(embed=unmute_embed)
@@ -1255,7 +1258,7 @@ async def unmute_command(ctx, member: discord.Member):
             title="Member Unmuted",
             description=f"Successfully unmuted **{member.display_name}**.",
             color=discord.Color.blue(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.UTC)
         )
         embed.set_footer(text="made by summers 2000") # Footer for this embed
         await ctx.send(embed=embed)
@@ -1281,7 +1284,7 @@ async def slowmode_command(ctx, seconds: int):
         embed = discord.Embed(
             title="Slowmode Update",
             color=discord.Color.purple(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.UTC)
         )
         embed.set_footer(text="made by summers 2000") # Footer for this embed
 
@@ -1318,7 +1321,7 @@ async def clear_messages(ctx, amount: int):
             title="Messages Cleared",
             description=f"Successfully deleted `{len(deleted) - 1}` message(s).",
             color=discord.Color.dark_teal(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.UTC)
         )
         embed.set_footer(text="made by summers 2000") # Footer for this embed
 
@@ -1345,7 +1348,7 @@ async def help_command(ctx):
         title="GrowAGarden Bot Commands", # Changed "Sacrificed" to "GrowAGarden"
         description="Here's a list of all available commands and their usage:",
         color=discord.Color.blue(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
 
@@ -1460,7 +1463,7 @@ async def seed_stock_dm_toggle(ctx):
         title="Seed DM Notification Status",
         description=f"Your DM notifications for Beanstalk, Pepper, and Mushroom seeds have been **{status_message}**.",
         color=color,
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
@@ -1499,7 +1502,7 @@ async def gear_stock_dm_toggle(ctx):
         title="Gear DM Notification Status",
         description=f"Your DM notifications for Master Sprinkler and Lightning Rod have been **{status_message}**.",
         color=color,
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
@@ -1666,7 +1669,7 @@ async def rblxusername(ctx, *, username: str):
             title=f"Roblox Profile: {display_name}",
             url=f"https://www.roblox.com/users/{user_id}/profile",
             color=discord.Color.blue(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.UTC)
         )
         embed.set_footer(text="made by summers 2000")
 
@@ -2145,7 +2148,7 @@ async def game_stats_command(ctx):
     embed = discord.Embed(
         title=f"{ctx.author.display_name}'s Game Statistics",
         color=discord.Color.purple(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
 
@@ -2191,7 +2194,7 @@ async def c4_leaderboard(ctx):
     embed = discord.Embed(
         title="Connect4 Leaderboard (Top 10 Wins)",
         color=discord.Color.blue(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
 
@@ -2229,7 +2232,7 @@ async def ttt_leaderboard(ctx):
     embed = discord.Embed(
         title="Tic-Tac-Toe Leaderboard (Top 10 Wins)",
         color=discord.Color.purple(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
 
@@ -2260,7 +2263,7 @@ async def roll_command(ctx, max_number: int = 100):
         title="🎲 Roll the Dice! 🎲",
         description=f"{ctx.author.mention} rolled a **`{result}`** (1 - {max_number})!",
         color=discord.Color.blue(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
@@ -2306,7 +2309,7 @@ async def lotto_buy(ctx, quantity: int = 1):
                     f"Your total tickets: `{LOTTO_TICKETS[user_id]}`\n"
                     f"Current pot: **`{LOTTO_POT}`** coins.",
         color=discord.Color.green(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
@@ -2321,7 +2324,7 @@ async def lotto_status(ctx):
     embed = discord.Embed(
         title="Current Lottery Status",
         color=discord.Color.blue(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
 
@@ -2383,7 +2386,7 @@ async def lotto_draw(ctx):
                     f"And the winner is... {winner_name}!\n"
                     f"They won the entire pot of **`{winnings}`** coins!",
         color=discord.Color.gold(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
@@ -2469,7 +2472,7 @@ async def audit_log_command(ctx, action_type: str = None, user: discord.Member =
     embed = discord.Embed(
         title=f"Recent Audit Log Entries",
         color=discord.Color.orange(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
 
@@ -2525,7 +2528,7 @@ async def my_achievements_command(ctx):
     embed = discord.Embed(
         title=f"{ctx.author.display_name}'s Achievements",
         color=discord.Color.gold(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
 
@@ -2572,7 +2575,7 @@ async def set_garden(ctx, description: str, image_url: str = None):
         title="Your Garden Showcase Updated!",
         description=f"**Description:** {description}",
         color=discord.Color.green(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     if image_url:
         embed.set_image(url=image_url)
@@ -2597,7 +2600,7 @@ async def show_my_garden(ctx):
         title=f"{ctx.author.display_name}'s Garden Showcase",
         description=garden_data.get("description", "No description set."),
         color=discord.Color.green(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     if garden_data.get("image_url"):
         embed.set_image(url=garden_data["image_url"])
@@ -2646,7 +2649,7 @@ async def show_random_garden(ctx):
         title=f"🏡 Garden Showcase: {user.display_name}'s Garden 🏡",
         description=garden_data.get("description", "No description set."),
         color=discord.Color.blue(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     if garden_data.get("image_url"):
         embed.set_image(url=garden_data["image_url"])
@@ -2699,7 +2702,7 @@ async def garden_showcase_poster():
         title=f"🏡 Garden Showcase: {user.display_name}'s Garden 🏡",
         description=garden_data.get("description", "No description set."),
         color=discord.Color.blue(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     if garden_data.get("image_url"):
         embed.set_image(url=garden_data["image_url"])
@@ -2749,7 +2752,7 @@ async def remind_me(ctx, time_str: str, *, message: str):
         return
 
     delay_seconds = amount * unit_map[unit]
-    remind_time = datetime.utcnow() + timedelta(seconds=delay_seconds)
+    remind_time = datetime.now(timezone.UTC) + timedelta(seconds=delay_seconds)
 
     reminders.append({
         "user_id": ctx.author.id,
@@ -2784,7 +2787,7 @@ async def remind_me(ctx, time_str: str, *, message: str):
         description=f"I will remind you about: **`{message}`**\n"
                     f"In approximately: `{human_readable_delay}`",
         color=discord.Color.teal(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
@@ -2793,7 +2796,7 @@ async def remind_me(ctx, time_str: str, *, message: str):
 @tasks.loop(seconds=10) # Check reminders every 10 seconds
 async def reminder_checker():
     global reminders
-    current_time = datetime.utcnow()
+    current_time = datetime.now(timezone.UTC)
     reminders_to_send = []
     reminders_to_keep = []
 
@@ -2827,7 +2830,7 @@ async def reminder_checker():
                     title="⏰ Your Reminder! ⏰",
                     description=f"You asked me to remind you about: **`{reminder['message']}`**",
                     color=discord.Color.orange(),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.UTC)
                 )
                 embed.set_footer(text="made by summers 2000")
                 await user.send(embed=embed)
@@ -2869,7 +2872,7 @@ class ConfirmBanRequestView(discord.ui.View):
             description="Please send $15 to Cash App: **`$sxi659`**\n"
                         "Once sent, reply to this DM with the **User ID** of the person you want to ban from Sacrificed.",
             color=discord.Color.gold(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.UTC)
         )
         embed.set_footer(text="made by summers 2000")
         await interaction.response.send_message(embed=embed)
@@ -2896,7 +2899,7 @@ class ConfirmBanRequestView(discord.ui.View):
             title="Ban Request Canceled",
             description="You have canceled the ban request process.",
             color=discord.Color.red(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.UTC)
         )
         embed.set_footer(text="made by summers 2000")
         await interaction.response.send_message(embed=embed)
@@ -2912,7 +2915,7 @@ class ConfirmBanRequestView(discord.ui.View):
                     title="Ban Request Timed Out",
                     description="Your ban request confirmation timed out. Please try again if you wish to proceed.",
                     color=discord.Color.red(),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.UTC)
                 )
                 embed.set_footer(text="made by summers 2000")
                 # Removed sending ephemeral message here as it might conflict with original DM channel.
@@ -2941,7 +2944,7 @@ async def ban_request(ctx):
         description="Before we continue, please note that a ban request costs **$15**. "
                     "Are you willing to pay this to get a user banned from Sacrificed?",
         color=discord.Color.blue(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     ban_request_embed.set_footer(text="made by summers 2000")
 
@@ -3008,7 +3011,7 @@ async def on_message(message):
                                 f"**Requested Ban User ID:** `{target_user_id}`\n"
                                 f"**Status:** User ID `{target_user_id}` not found in the server. No action taken.",
                     color=discord.Color.red(),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.UTC)
                 )
                 log_embed.set_footer(text="made by summers 2000")
                 await log_channel.send(embed=log_embed)
@@ -3023,7 +3026,7 @@ async def on_message(message):
                                 f"**Requested Ban User ID:** `{target_user_id}`\n"
                                 f"**Status:** Bot missing permissions to fetch member in the server. Cannot process request.",
                     color=discord.Color.orange(),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.UTC)
                 )
                 log_embed.set_footer(text="made by summers 2000")
                 await log_channel.send(embed=log_embed)
@@ -3038,7 +3041,7 @@ async def on_message(message):
                                 f"**Requested Ban User ID:** `{target_user_id}`\n"
                                 f"**Status:** An unexpected error occurred while fetching user data. Cannot process request. Error: `{e}`",
                     color=discord.Color.orange(),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.UTC)
                 )
                 log_embed.set_footer(text="made by summers 2000")
                 await log_channel.send(embed=log_embed)
@@ -3049,12 +3052,12 @@ async def on_message(message):
             # Check if target user has the boosting role
             if discord.utils.get(target_member.roles, id=BOOSTING_ROLE_ID):
                 log_embed = discord.Embed(
-                    title="🚨 Ban Request Log ?",
+                    title="🚨 Ban Request Log 🚨",
                     description=f"**Requester:** {requester.mention} (`{requester.id}`)\n"
                                 f"**Target User:** {target_member.mention} (`{target_member.id}`)\n"
                                 f"**Status:** This person cannot be banned because they are boosting.",
                     color=discord.Color.orange(),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.UTC)
                 )
                 log_embed.set_footer(text="made by summers 2000")
                 await log_channel.send(embed=log_embed)
@@ -3066,7 +3069,7 @@ async def on_message(message):
                                 f"**Target User:** {target_member.mention} (`{target_member.id}`)\n"
                                 f"**Status:** Ban request received and logged. A moderator will review this. (User is NOT boosting)",
                     color=discord.Color.green(),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.UTC)
                 )
                 log_embed.set_footer(text="made by summers 2000")
                 await log_channel.send(embed=log_embed)
@@ -3092,7 +3095,7 @@ async def balance_command(ctx):
         title=f"{ctx.author.display_name}'s Balance",
         description=f"You have **`{balance}`** coins.",
         color=discord.Color.gold(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
@@ -3105,7 +3108,7 @@ async def daily_command(ctx):
     Usage: !daily
     """
     user_id = ctx.author.id
-    current_time = datetime.utcnow()
+    current_time = datetime.now(timezone.UTC)
     
     # Check if the user has claimed before and if cooldown is active
     last_claim_time = last_daily_claim.get(user_id)
@@ -3132,7 +3135,7 @@ async def daily_command(ctx):
         title="Daily Bonus Claimed!",
         description=f"You received **`{daily_amount}`** coins!",
         color=discord.Color.green(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
@@ -3170,7 +3173,7 @@ async def transfer_command(ctx, member: discord.Member, amount: int):
         title="Coin Transfer Successful!",
         description=f"**`{amount}`** coins transferred from {ctx.author.mention} to {member.mention}.",
         color=discord.Color.blue(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
@@ -3186,7 +3189,7 @@ async def shop_command(ctx, category: str = None):
         title="Shop Items",
         description="Available items for purchase:",
         color=discord.Color.purple(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
 
@@ -3260,7 +3263,7 @@ async def buy_command(ctx, item_name: str, quantity: int = 1):
         title="Purchase Successful!",
         description=f"You bought `{quantity}x {item_found['display_name']}` for **`{total_cost}`** coins.",
         color=discord.Color.green(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
@@ -3328,7 +3331,7 @@ async def sell_command(ctx, item_name: str, quantity: int = 1):
         title="Sale Successful!",
         description=f"You sold `{quantity}x {item_in_inventory}` for **`{sell_price}`** coins.",
         color=discord.Color.orange(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
@@ -3345,7 +3348,7 @@ async def inventory_command(ctx):
     embed = discord.Embed(
         title=f"{ctx.author.display_name}'s Inventory",
         color=discord.Color.greyple(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
 
@@ -3407,7 +3410,7 @@ async def use_command(ctx, *, item_name: str):
         title="Item Used!",
         description=f"You successfully used **`{item_to_use}`**.",
         color=discord.Color.blue(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
     # Add a placeholder for the effect of the item
@@ -3472,7 +3475,7 @@ async def craft_command(ctx, *, recipe_name: str):
         title="Crafting Successful!",
         description=f"You successfully crafted **`{recipe_found['display_name']}`**!",
         color=discord.Color.gold(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
@@ -3487,7 +3490,7 @@ async def recipes_command(ctx):
         title="Crafting Recipes",
         description="Available recipes:",
         color=discord.Color.blue(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
 
@@ -3537,7 +3540,7 @@ async def iteminfo_command(ctx, *, item_name: str):
         title=f"ℹ️ Item Info: {item_data.get('display_name', item_name)}",
         description=item_data.get("description", "No description provided."),
         color=discord.Color.teal(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
 
@@ -3571,9 +3574,9 @@ async def richest_command(ctx):
     ], key=lambda x: x[1], reverse=True)
 
     embed = discord.Embed(
-        title="💰 Richest Users Leaderboard �",
+        title="💰 Richest Users Leaderboard 💰",
         color=discord.Color.gold(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
 
@@ -3613,7 +3616,7 @@ async def coinflip_command(ctx, amount: int, choice: str = None):
     embed = discord.Embed(
         title="Coin Flip!",
         description=f"The coin landed on **`{result.upper()}`**!",
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.UTC)
     )
     embed.set_footer(text="made by summers 2000")
 
