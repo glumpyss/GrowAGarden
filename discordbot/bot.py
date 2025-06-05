@@ -119,6 +119,12 @@ CRAFTING_RECIPES = {
     }
 }
 
+# --- Lottery System Variables ---
+LOTTO_FILE = 'lotto.json'
+LOTTO_TICKETS = {} # {user_id: quantity}
+LOTTO_POT = 0      # Current coin amount in the lottery pot
+LOTTO_TICKET_PRICE = 100 # Price per lottery ticket
+LOTTO_MIN_PLAYERS = 2 # Minimum players for a lottery draw
 
 # --- Ban Request Specifics ---
 BAN_REQUEST_LOG_CHANNEL_ID = 1379985805027840120 # Channel to send ban request logs
@@ -138,7 +144,9 @@ ACHIEVEMENT_DEFINITIONS = {
     "FIRST_GARDEN_SHOWCASE": "Budding Botanist!",
     "FIVE_C4_WINS": "Connect4 Pro!",
     "FIVE_TTT_WINS": "Tic-Tac-Toe Master!",
-    "FIRST_DAILY_CLAIM": "Daily Dough Getter!" # New achievement for daily command
+    "FIRST_DAILY_CLAIM": "Daily Dough Getter!", # New achievement for daily command
+    "FIRST_ROLL_COMMAND": "First Roll!", # New achievement for roll command
+    "FIRST_LOTTO_ENTRY": "Lottery Enthusiast!" # New achievement for lottery entry
 }
 
 # --- Helper Functions for Data Persistence (JSON files) ---
@@ -199,6 +207,144 @@ def load_last_daily_claim():
 def save_last_daily_claim():
     claims_to_save = {str(k): v.isoformat() for k, v in last_daily_claim.items()}
     save_data(LAST_DAILY_CLAIM_FILE, claims_to_save)
+
+# --- Game Stats Persistence ---
+def load_game_stats():
+    global game_stats
+    game_stats_raw = load_data(GAME_STATS_FILE, {})
+    # Ensure user IDs are integers
+    game_stats = {int(user_id): data for user_id, data in game_stats_raw.items()}
+    print(f"Loaded game stats for {len(game_stats)} users.")
+
+def save_game_stats():
+    # Convert user IDs back to strings for JSON serialization
+    save_data(GAME_STATS_FILE, {str(user_id): data for user_id, data in game_stats.items()})
+
+def update_game_stats(user_id, game_type, result_type):
+    """Updates game statistics for a user."""
+    game_stats.setdefault(user_id, {"c4_wins": 0, "c4_losses": 0, "c4_draws": 0, "ttt_wins": 0, "ttt_losses": 0, "ttt_draws": 0})
+    if game_type == "c4":
+        if result_type == "win":
+            game_stats[user_id]["c4_wins"] += 1
+        elif result_type == "loss":
+            game_stats[user_id]["c4_losses"] += 1
+        elif result_type == "draw":
+            game_stats[user_id]["c4_draws"] += 1
+    elif game_type == "ttt":
+        if result_type == "win":
+            game_stats[user_id]["ttt_wins"] += 1
+        elif result_type == "loss":
+            game_stats[user_id]["ttt_losses"] += 1
+        elif result_type == "draw":
+            game_stats[user_id]["ttt_draws"] += 1
+    save_game_stats()
+    print(f"Updated game stats for user {user_id}: {game_stats[user_id]}")
+
+# --- Achievement Persistence ---
+def load_achievements():
+    global achievements
+    achievements_raw = load_data(ACHIEVEMENTS_FILE, {})
+    # Ensure user IDs are integers
+    achievements = {int(user_id): data for user_id, data in achievements_raw.items()}
+    print(f"Loaded achievements for {len(achievements)} users.")
+
+def save_achievements():
+    # Convert user IDs back to strings for JSON serialization
+    save_data(ACHIEVEMENTS_FILE, {str(user_id): data for user_id, data in achievements.items()})
+
+async def check_achievement(user_id, achievement_id, ctx=None):
+    """Awards an achievement to a user if not already earned."""
+    if user_id not in achievements:
+        achievements[user_id] = []
+    
+    if achievement_id not in achievements[user_id]:
+        achievements[user_id].append(achievement_id)
+        save_achievements()
+        achievement_name = ACHIEVEMENT_DEFINITIONS.get(achievement_id, achievement_id.replace('_', ' ').title())
+        print(f"User {user_id} earned achievement: {achievement_name}")
+        if ctx: # Send a message only if a context is available
+            try:
+                embed = discord.Embed(
+                    title="Achievement Unlocked!",
+                    description=f"🎉 Congratulations, {ctx.author.mention}! You've earned the achievement: **{achievement_name}**!",
+                    color=discord.Color.gold(),
+                    timestamp=datetime.utcnow()
+                )
+                embed.set_footer(text="made by summers 2000")
+                await ctx.send(embed=embed)
+            except discord.Forbidden:
+                print(f"Could not send achievement message to channel {ctx.channel.id} for user {user_id}.")
+            except Exception as e:
+                print(f"Error sending achievement message: {e}")
+
+# --- DM Users Persistence ---
+def load_dm_users():
+    global DM_NOTIFIED_USERS
+    dm_users_raw = load_data(DM_USERS_FILE, {})
+    DM_NOTIFIED_USERS = {int(k): v for k, v in dm_users_raw.items()} # Ensure keys are ints
+    print(f"Loaded DM users for {len(DM_NOTIFIED_USERS)} users.")
+
+def save_dm_users():
+    save_data(DM_USERS_FILE, {str(k): v for k, v in DM_NOTIFIED_USERS.items()})
+
+# --- Notify Items Persistence ---
+def load_notify_items():
+    global notify_items
+    notify_items_raw = load_data(NOTIFY_ITEMS_FILE, {})
+    notify_items = {int(k): v for k, v in notify_items_raw.items()}
+    print(f"Loaded notify items for {len(notify_items)} users.")
+
+def save_notify_items():
+    save_data(NOTIFY_ITEMS_FILE, {str(k): v for k, v in notify_items.items()})
+
+# --- My Gardens Persistence ---
+def load_my_gardens():
+    global my_gardens
+    my_gardens_raw = load_data(MY_GARDENS_FILE, {})
+    my_gardens = {int(k): v for k, v in my_gardens_raw.items()}
+    print(f"Loaded gardens for {len(my_gardens)} users.")
+
+def save_my_gardens():
+    save_data(MY_GARDENS_FILE, {str(k): v for k, v in my_gardens.items()})
+
+# --- Reminders Persistence ---
+def load_reminders():
+    global reminders
+    reminders_raw = load_data(REMINDERS_FILE, [])
+    reminders = []
+    for r in reminders_raw:
+        try:
+            # Convert timestamp string back to datetime object
+            r['remind_time'] = datetime.fromisoformat(r['remind_time'])
+            reminders.append(r)
+        except (ValueError, KeyError) as e:
+            print(f"Error loading reminder: {e}. Skipping entry.")
+    reminders.sort(key=lambda x: x['remind_time']) # Ensure sorted after loading
+    print(f"Loaded {len(reminders)} reminders.")
+
+def save_reminders():
+    # Convert datetime objects to ISO format strings for JSON serialization
+    reminders_to_save = []
+    for r in reminders:
+        r_copy = r.copy()
+        r_copy['remind_time'] = r_copy['remind_time'].isoformat()
+        reminders_to_save.append(r_copy)
+    save_data(REMINDERS_FILE, reminders_to_save)
+
+# --- Lottery Persistence ---
+def load_lotto_data():
+    global LOTTO_TICKETS, LOTTO_POT
+    lotto_data = load_data(LOTTO_FILE, {"tickets": {}, "pot": 0})
+    LOTTO_TICKETS = {int(k): v for k, v in lotto_data.get("tickets", {}).items()}
+    LOTTO_POT = lotto_data.get("pot", 0)
+    print(f"Loaded lottery data. Pot: {LOTTO_POT}, Tickets: {LOTTO_TICKETS}")
+
+def save_lotto_data():
+    lotto_data = {
+        "tickets": {str(k): v for k, v in LOTTO_TICKETS.items()},
+        "pot": LOTTO_POT
+    }
+    save_data(LOTTO_FILE, lotto_data)
 
 
 # --- Helper Functions for API Calls ---
@@ -312,6 +458,7 @@ async def on_ready():
     load_user_balances() # Load user balances for economy
     load_user_inventories() # Load user inventories for economy
     load_last_daily_claim() # Load last daily claim timestamps
+    load_lotto_data() # Load lottery data
 
     # Start the autostock task when the bot is ready
     if not autostock_checker.is_running():
@@ -513,7 +660,7 @@ async def autostock_toggle(ctx, status: str = None):
         await ctx.send(f"Auto-stock updates are now **enabled** and will be sent to this channel (<#{AUTOSTOCK_CHANNEL_ID}>).")
         # Trigger an immediate check when turned on, to send current stock
         await autostock_checker()
-        check_achievement(ctx.author.id, "FIRST_AUTOSTOCK_TOGGLE")
+        await check_achievement(ctx.author.id, "FIRST_AUTOSTOCK_TOGGLE", ctx)
     elif status == "off":
         if not AUTOSTOCK_ENABLED:
             await ctx.send("Auto-stock is already disabled.")
@@ -670,7 +817,7 @@ async def autostock_checker():
                         try:
                             await user.send(embed=dm_embed)
                             print(f"Sent DM notification to {user.name} ({user.id}) for new {dm_type}.")
-                            check_achievement(user.id, "FIRST_DM_NOTIFICATION")
+                            await check_achievement(user.id, "FIRST_DM_NOTIFICATION", None) # No ctx for DM
                         except discord.Forbidden:
                             print(f"Could not send DM to {user.name} ({user.id}). User has DMs disabled or blocked bot.")
                         except Exception as e:
@@ -720,7 +867,7 @@ async def autostock_checker():
                 try:
                     await user.send(embed=dm_embed)
                     print(f"Sent DM notification to {user.name} ({user.id}) for item '{monitored_item_name}'.")
-                    check_achievement(user.id, "FIRST_DM_NOTIFICATION") # Could make a specific one for this too
+                    await check_achievement(user.id, "FIRST_DM_NOTIFICATION", None) # Could make a specific one for this too
                 except discord.Forbidden:
                     print(f"Could not send DM to {user.name} ({user.id}). DMs disabled for item notification.")
                 except Exception as e:
@@ -1246,7 +1393,9 @@ async def help_command(ctx):
         f"`!tictactoe <@opponent>`: Starts a game of Tic-Tac-Toe.\n"
         f"`!gamestats`: Shows your Connect4 and Tic-Tac-Toe game statistics.\n"
         f"`!c4leaderboard`: Shows the Connect4 server leaderboard.\n"
-        f"`!tttleaderboard`: Shows the Tic-Tac-Toe server leaderboard."
+        f"`!tttleaderboard`: Shows the Tic-Tac-Toe server leaderboard.\n"
+        f"`!roll [number]`: Rolls a dice or a number between 1 and [number] (default 100).\n"
+        f"`!lotto <buy [tickets] | draw | status>`: Interact with the server lottery. Costs {LOTTO_TICKET_PRICE} coins per ticket."
     )
     embed.add_field(name="__Game Commands__", value=game_commands_desc, inline=False)
 
@@ -1321,7 +1470,7 @@ async def seed_stock_dm_toggle(ctx):
         print(f"Could not DM user {ctx.author.id} for seedstockdm toggle. DMs disabled.")
 
     if status_message == "enabled":
-        check_achievement(user_id, "FIRST_DM_NOTIFICATION")
+        await check_achievement(user_id, "FIRST_DM_NOTIFICATION", ctx)
 
 # --- DM Notification Command for Gear ---
 @bot.command(name="gearstockdm")
@@ -1360,7 +1509,7 @@ async def gear_stock_dm_toggle(ctx):
         print(f"Could not DM user {ctx.author.id} for gearstockdm toggle. DMs disabled.")
 
     if status_message == "enabled":
-        check_achievement(user_id, "FIRST_DM_NOTIFICATION")
+        await check_achievement(user_id, "FIRST_DM_NOTIFICATION", ctx)
 
 # --- Specific Item DM Notification Command ---
 @bot.command(name="notifyitem")
@@ -1402,7 +1551,7 @@ async def notify_item_toggle(ctx, *, item_name: str):
                 await ctx.author.send(f"Your GrowAGarden notification for **{item_name}** is now **enabled**.")
             except discord.Forbidden:
                 print(f"Could not DM user {ctx.author.id} for notifyitem enable. DMs disabled.")
-        check_achievement(user_id, "FIRST_DM_NOTIFICATION") # Could make a specific one for this too
+        await check_achievement(user_id, "FIRST_DM_NOTIFICATION", ctx) # Could make a specific one for this too
 
     save_notify_items()
 
@@ -2094,6 +2243,151 @@ async def ttt_leaderboard(ctx):
     embed.description = description if description else "No Tic-Tac-Toe wins yet!"
     await ctx.send(embed=embed)
 
+# --- Roll Command ---
+@bot.command(name="roll")
+async def roll_command(ctx, max_number: int = 100):
+    """
+    Rolls a dice or a number between 1 and [number] (default 100).
+    Usage: !roll [max_number]
+    """
+    if max_number <= 0:
+        await ctx.send("The maximum number must be a positive integer.")
+        return
+    
+    result = random.randint(1, max_number)
+    
+    embed = discord.Embed(
+        title="🎲 Roll the Dice! 🎲",
+        description=f"{ctx.author.mention} rolled a **`{result}`** (1 - {max_number})!",
+        color=discord.Color.blue(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+    await ctx.send(embed=embed)
+    await check_achievement(ctx.author.id, "FIRST_ROLL_COMMAND", ctx)
+
+
+# --- Lottery Commands ---
+@bot.group(name="lotto", invoke_without_command=True)
+async def lotto_group(ctx):
+    """
+    Interact with the server lottery.
+    Usage: !lotto <buy [tickets] | draw | status>
+    """
+    await ctx.send(f"Welcome to the Lottery! Use `!lotto buy [amount]` to buy tickets, `!lotto status` to check the current pot and players, or `!lotto draw` to draw a winner (admin only). Each ticket costs `{LOTTO_TICKET_PRICE}` coins.")
+
+@lotto_group.command(name="buy")
+async def lotto_buy(ctx, quantity: int = 1):
+    """
+    Buy lottery tickets.
+    Usage: !lotto buy [amount]
+    """
+    if quantity <= 0:
+        await ctx.send("You must buy at least one lottery ticket.")
+        return
+    
+    cost = LOTTO_TICKET_PRICE * quantity
+    user_id = ctx.author.id
+
+    if user_balances.get(user_id, 0) < cost:
+        await ctx.send(f"You don't have enough coins to buy `{quantity}` ticket(s). You need `{cost}` coins, but you only have `{user_balances.get(user_id, 0)}`.")
+        return
+    
+    user_balances[user_id] -= cost
+    LOTTO_POT += cost
+    LOTTO_TICKETS[user_id] = LOTTO_TICKETS.get(user_id, 0) + quantity
+
+    save_user_balances()
+    save_lotto_data()
+
+    embed = discord.Embed(
+        title="Lottery Tickets Purchased!",
+        description=f"You bought `{quantity}` lottery ticket(s) for **`{cost}`** coins.\n"
+                    f"Your total tickets: `{LOTTO_TICKETS[user_id]}`\n"
+                    f"Current pot: **`{LOTTO_POT}`** coins.",
+        color=discord.Color.green(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+    await ctx.send(embed=embed)
+    await check_achievement(user_id, "FIRST_LOTTO_ENTRY", ctx)
+
+@lotto_group.command(name="status")
+async def lotto_status(ctx):
+    """
+    Check the current lottery pot and participating players.
+    Usage: !lotto status
+    """
+    embed = discord.Embed(
+        title="Current Lottery Status",
+        color=discord.Color.blue(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+
+    embed.add_field(name="Current Pot", value=f"**`{LOTTO_POT}`** coins", inline=False)
+    
+    if not LOTTO_TICKETS:
+        embed.add_field(name="Participants", value="No one has bought tickets yet!", inline=False)
+    else:
+        participants_list = []
+        # Sort participants by number of tickets descending
+        sorted_participants = sorted(LOTTO_TICKETS.items(), key=lambda item: item[1], reverse=True)
+        for user_id, tickets in sorted_participants:
+            user = bot.get_user(user_id) or await bot.fetch_user(user_id)
+            user_name = user.display_name if user else f"Unknown User (ID: {user_id})"
+            participants_list.append(f"{user_name}: `{tickets}` tickets")
+        
+        embed.add_field(name="Participants (Tickets)", value="\n".join(participants_list), inline=False)
+    
+    await ctx.send(embed=embed)
+
+@lotto_group.command(name="draw")
+@commands.has_permissions(administrator=True) # Only administrators can draw the lottery
+async def lotto_draw(ctx):
+    """
+    Draws a winner for the lottery. (Admin only)
+    Usage: !lotto draw
+    """
+    if len(LOTTO_TICKETS) < LOTTO_MIN_PLAYERS:
+        await ctx.send(f"At least `{LOTTO_MIN_PLAYERS}` players are required to draw the lottery. Current players: `{len(LOTTO_TICKETS)}`.")
+        return
+    
+    if LOTTO_POT == 0:
+        await ctx.send("The lottery pot is empty. No one has bought tickets yet!")
+        return
+
+    # Create a list of all tickets for drawing (each ticket represents a chance)
+    all_tickets = []
+    for user_id, tickets in LOTTO_TICKETS.items():
+        all_tickets.extend([user_id] * tickets) # Add user_id 'tickets' times
+
+    winner_id = random.choice(all_tickets)
+    winner_user = bot.get_user(winner_id) or await bot.fetch_user(winner_id)
+    winner_name = winner_user.mention if winner_user else f"Unknown User (ID: {winner_id})"
+
+    winnings = LOTTO_POT
+    user_balances[winner_id] = user_balances.get(winner_id, 0) + winnings
+    
+    # Reset lottery state
+    global LOTTO_TICKETS, LOTTO_POT
+    LOTTO_TICKETS = {}
+    LOTTO_POT = 0
+
+    save_user_balances()
+    save_lotto_data()
+
+    embed = discord.Embed(
+        title="🎉 Lottery Winner! 🎉",
+        description=f"The lottery has been drawn!\n"
+                    f"And the winner is... {winner_name}!\n"
+                    f"They won the entire pot of **`{winnings}`** coins!",
+        color=discord.Color.gold(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+    await ctx.send(embed=embed)
+
 
 # --- Audit Log Command ---
 @bot.command(name="auditlog")
@@ -2284,7 +2578,7 @@ async def set_garden(ctx, description: str, image_url: str = None):
         embed.set_image(url=image_url)
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
-    check_achievement(user_id, "FIRST_GARDEN_SHOWCASE")
+    await check_achievement(user_id, "FIRST_GARDEN_SHOWCASE", ctx)
 
 @bot.command(name="mygarden")
 async def show_my_garden(ctx):
@@ -2494,7 +2788,7 @@ async def remind_me(ctx, time_str: str, *, message: str):
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
-    check_achievement(ctx.author.id, "FIRST_REMINDER_SET")
+    await check_achievement(ctx.author.id, "FIRST_REMINDER_SET", ctx)
 
 @tasks.loop(seconds=10) # Check reminders every 10 seconds
 async def reminder_checker():
@@ -2755,7 +3049,7 @@ async def on_message(message):
             # Check if target user has the boosting role
             if discord.utils.get(target_member.roles, id=BOOSTING_ROLE_ID):
                 log_embed = discord.Embed(
-                    title="🚨 Ban Request Log �",
+                    title="🚨 Ban Request Log ?",
                     description=f"**Requester:** {requester.mention} (`{requester.id}`)\n"
                                 f"**Target User:** {target_member.mention} (`{target_member.id}`)\n"
                                 f"**Status:** This person cannot be banned because they are boosting.",
@@ -2842,7 +3136,7 @@ async def daily_command(ctx):
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
-    check_achievement(user_id, "FIRST_DAILY_CLAIM")
+    await check_achievement(user_id, "FIRST_DAILY_CLAIM", ctx)
 
 @bot.command(name="transfer")
 async def transfer_command(ctx, member: discord.Member, amount: int):
@@ -3277,7 +3571,7 @@ async def richest_command(ctx):
     ], key=lambda x: x[1], reverse=True)
 
     embed = discord.Embed(
-        title="💰 Richest Users Leaderboard 💰",
+        title="💰 Richest Users Leaderboard �",
         color=discord.Color.gold(),
         timestamp=datetime.utcnow()
     )
