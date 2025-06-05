@@ -436,7 +436,7 @@ def create_stock_embed(data, title="Current Stock Information"):
                 inline=True
             )
 
-    if not found_any_item:
+    if not found_any_stock_item:
         embed.description = "No stock information available across any categories at this time."
 
     return embed
@@ -849,7 +849,7 @@ async def autostock_checker():
         if found_item_in_stock and monitored_item_name not in last_item_status_for_user:
             # Item is newly in stock for this user
             user = bot.get_user(user_id)
-            if user is None:
+            if user is None: # Use strict equality check
                 try:
                     user = await bot.fetch_user(user_id)
                 except discord.NotFound:
@@ -2285,18 +2285,20 @@ async def lotto_buy(ctx, quantity: int = 1):
     Buy lottery tickets.
     Usage: !lotto buy [amount]
     """
-    global LOTTO_TICKETS, LOTTO_POT # Moved to the top of the function
+    # Ensure LOTTO_TICKETS and LOTTO_POT are declared global here before any usage
+    global LOTTO_TICKETS, LOTTO_POT 
+    
     if quantity <= 0:
         await ctx.send("You must buy at least one lottery ticket.")
         return
-    
+
     cost = LOTTO_TICKET_PRICE * quantity
     user_id = ctx.author.id
 
     if user_balances.get(user_id, 0) < cost:
         await ctx.send(f"You don't have enough coins to buy `{quantity}` ticket(s). You need `{cost}` coins, but you only have `{user_balances.get(user_id, 0)}`.")
         return
-    
+
     user_balances[user_id] -= cost
     LOTTO_POT += cost
     LOTTO_TICKETS[user_id] = LOTTO_TICKETS.get(user_id, 0) + quantity
@@ -2322,6 +2324,9 @@ async def lotto_status(ctx):
     Check the current lottery pot and participating players.
     Usage: !lotto status
     """
+    # Ensure LOTTO_TICKETS and LOTTO_POT are declared global here before any usage
+    global LOTTO_TICKETS, LOTTO_POT 
+
     embed = discord.Embed(
         title="Current Lottery Status",
         color=discord.Color.blue(),
@@ -2353,6 +2358,9 @@ async def lotto_draw(ctx):
     Draws a winner for the lottery. (Admin only)
     Usage: !lotto draw
     """
+    # Ensure LOTTO_TICKETS and LOTTO_POT are declared global here before any usage
+    global LOTTO_TICKETS, LOTTO_POT 
+
     if len(LOTTO_TICKETS) < LOTTO_MIN_PLAYERS:
         await ctx.send(f"At least `{LOTTO_MIN_PLAYERS}` players are required to draw the lottery. Current players: `{len(LOTTO_TICKETS)}`.")
         return
@@ -2374,7 +2382,6 @@ async def lotto_draw(ctx):
     user_balances[winner_id] = user_balances.get(winner_id, 0) + winnings
     
     # Reset lottery state
-    global LOTTO_TICKETS, LOTTO_POT
     LOTTO_TICKETS = {}
     LOTTO_POT = 0
 
@@ -2689,7 +2696,7 @@ async def garden_showcase_poster():
             user = bot.get_user(user_id)
             if user: # Ensure the user still exists in the bot's cache
                 valid_gardens.append({"user": user, "data": garden_data})
-    
+
     if not valid_gardens:
         print("No valid gardens to showcase.")
         return
@@ -3549,7 +3556,7 @@ async def iteminfo_command(ctx, *, item_name: str):
         embed.add_field(name="Buy Price", value=f"`{item_data['price']}` coins", inline=True)
     if item_data.get("sell_price") is not None:
         embed.add_field(name="Sell Price", value=f"`{item_data['sell_price']}` coins", inline=True)
-    
+
     embed.add_field(name="Type", value=f"`{item_data.get('type', 'N/A').capitalize()}`", inline=True)
     embed.add_field(name="Source", value=f"`{item_data.get('source', 'N/A')}`", inline=True)
 
