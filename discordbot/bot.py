@@ -59,6 +59,14 @@ LAST_KNOWN_DM_ITEM_STATUS = {category: set() for category in DM_MONITORED_CATEGO
 
 DM_USERS_FILE = 'dm_users.json' # File to persist DM_NOTIFIED_USERS
 
+# --- Ban Request Specifics ---
+BAN_REQUEST_LOG_CHANNEL_ID = 1379985805027840120 # Channel to send ban request logs
+BOOSTING_ROLE_ID = 1302076375922118696 # Role ID for users who cannot be banned
+
+# Stores the state of each user's ban request process:
+# {user_id: {"state": "awaiting_payment_confirmation" | "awaiting_userid", "guild_id": int}}
+BAN_REQUEST_STATES = {}
+
 # --- Helper Functions for DM Notification Persistence ---
 def load_dm_users():
     """Loads DM notification user data from a JSON file."""
@@ -449,11 +457,31 @@ async def autostock_checker():
                                 log_details.append(f"{cat_key.replace('Stock', '').capitalize()}: {', '.join(item_names)}")
                         
                         log_entry = " | ".join(log_details) if log_details else "No new stock items detected for log."
-                        STOCK_LOGS.append({'time': stock_time, 'details': log_entry})
+                        
+                        # Store log only if seeds stock changed
+                        seeds_in_current_stock = current_stock_data.get('seedsStock', [])
+                        seeds_in_last_stock = LAST_STOCK_DATA.get('seedsStock', []) if LAST_STOCK_DATA else []
+                        
+                        normalized_current_seeds = frozenset(
+                            frozenset({k: v for k, v in item.items() if k not in ['image', 'emoji']}.items())
+                            for item in seeds_in_current_stock
+                        )
+                        normalized_last_seeds = frozenset(
+                            frozenset({k: v for k, v in item.items() if k not in ['image', 'emoji']}.items())
+                            for item in seeds_in_last_stock
+                        )
 
-                        # Keep only the last 10 logs (or adjust as needed)
-                        if len(STOCK_LOGS) > 10:
-                            STOCK_LOGS.pop(0) # Remove the oldest log
+                        if normalized_current_seeds != normalized_last_seeds:
+                            seeds_log_details = []
+                            if seeds_in_current_stock:
+                                item_names = [item.get('name', 'Unknown') for item in seeds_in_current_stock]
+                                seeds_log_details.append(f"Seeds: {', '.join(item_names)}")
+                            
+                            seeds_log_entry = " | ".join(seeds_log_details) if seeds_log_details else "No specific seed changes to report."
+                            STOCK_LOGS.append({'time': stock_time, 'details': seeds_log_entry})
+                            # Keep only the last 10 logs (or adjust as needed)
+                            if len(STOCK_LOGS) > 10:
+                                STOCK_LOGS.pop(0) # Remove the oldest log
 
                     except discord.Forbidden:
                         print(f"Autostock: Bot does not have permission to send messages/embeds in channel {channel.name} ({channel.id}). Please check bot permissions!")
@@ -554,8 +582,8 @@ async def restock_logs(ctx):
         return
 
     embed = discord.Embed(
-        title="Recent Stock Change Logs",
-        description="Showing the latest stock changes:",
+        title="Recent Seed Stock Change Logs", # Updated title for clarity
+        description="Showing the latest **seed** stock changes:",
         color=discord.Color.blue(),
         timestamp=datetime.utcnow()
     )
@@ -566,7 +594,7 @@ async def restock_logs(ctx):
         time_str = log['time'].strftime("%Y-%m-%d %H:%M:%S UTC")
         embed.add_field(
             name=f"Change detected at {time_str}",
-            value=f"{log['details']}",
+            value=f"`{log['details']}`", # Added backticks for monospace font
             inline=False
         )
     await ctx.send(embed=embed)
@@ -1040,6 +1068,12 @@ async def help_command(ctx):
         f"`!gearstockdm`: Toggles DM notifications for Master Sprinkler and Lightning Rod. (Requires role ID: `{DM_NOTIFY_ROLE_ID}` OR `{DM_BYPASS_ROLE_ID}`)"
     )
     embed.add_field(name="__DM Notification Commands__", value=dm_notify_commands_desc, inline=False)
+
+    # --- Ban Request Command ---
+    ban_request_desc = (
+        f"`!banrequest`: Initiates a ban request process via DM. Costs $10."
+    )
+    embed.add_field(name="__Ban Request Command__", value=ban_request_desc, inline=False)
 
 
     await ctx.send(embed=embed)
@@ -1668,6 +1702,241 @@ async def handle_tictactoe_reaction(reaction, user):
             except discord.Forbidden:
                 pass
             return
+
+
+# --- Ban Request View ---
+class ConfirmBanRequestView(discord.ui.View):
+    def __init__(self, original_author_id, guild_id):
+        super().__init__(timeout=300) # 5 minutes timeout
+        self.original_author_id = original_author_id
+        self.guild_id = guild_id
+        self.response = None # To store 'yes' or 'no'
+
+    @discord.ui.button(label="Yes", style=discord.ButtonStyle.green)
+    async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.original_author_id:
+            await interaction.response.send_message("This interaction is not for you.", ephemeral=True)
+            return
+
+        self.response = True
+        self.stop() # Stop the view from listening for more interactions
+
+        # Update the original message to disable buttons
+        for item in self.children:
+            item.disabled = True
+        await interaction.message.edit(view=self)
+
+        embed = discord.Embed(
+            title="Ban Request: Payment Required",
+            description="Please send $10 to Cash App: **`$sxi659`**\n"
+                        "Once sent, reply to this DM with the **User ID** of the person you want to ban from Sacrificed.",
+            color=discord.Color.gold(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000")
+        await interaction.response.send_message(embed=embed)
+
+        # Update the global state for this user to await User ID
+        BAN_REQUEST_STATES[self.original_author_id] = {"state": "awaiting_userid", "guild_id": self.guild_id}
+
+
+    @discord.ui.button(label="No", style=discord.ButtonStyle.red)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.original_author_id:
+            await interaction.response.send_message("This interaction is not for you.", ephemeral=True)
+            return
+
+        self.response = False
+        self.stop() # Stop the view from listening for more interactions
+
+        # Update the original message to disable buttons
+        for item in self.children:
+            item.disabled = True
+        await interaction.message.edit(view=self)
+        
+        embed = discord.Embed(
+            title="Ban Request Canceled",
+            description="You have canceled the ban request process.",
+            color=discord.Color.red(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="made by summers 2000")
+        await interaction.response.send_message(embed=embed)
+
+    async def on_timeout(self):
+        if self.response is None: # Only if no button was clicked
+            try:
+                # Disable buttons on timeout
+                for item in self.children:
+                    item.disabled = True
+                await self.message.edit(content="Ban request confirmation timed out.", view=self)
+                embed = discord.Embed(
+                    title="Ban Request Timed Out",
+                    description="Your ban request confirmation timed out. Please try again if you wish to proceed.",
+                    color=discord.Color.red(),
+                    timestamp=datetime.utcnow()
+                )
+                embed.set_footer(text="made by summers 2000")
+                await self.message.channel.send(embed=embed)
+            except discord.HTTPException:
+                pass # Message might have been deleted or inaccessible
+            finally:
+                if self.original_author_id in BAN_REQUEST_STATES:
+                    del BAN_REQUEST_STATES[self.original_author_id]
+
+
+# --- Ban Request Command ---
+@bot.command(name="banrequest")
+@commands.guild_only()
+async def ban_request(ctx):
+    """
+    Initiates a ban request process via DM. Costs $10.
+    Usage: !banrequest
+    """
+    if ctx.author.id in BAN_REQUEST_STATES:
+        await ctx.send("You already have an active ban request. Please complete or cancel it in your DMs first.", ephemeral=True)
+        return
+
+    ban_request_embed = discord.Embed(
+        title="Ban Request Confirmation",
+        description="Before we continue, please note that a ban request costs **$10**. "
+                    "Are you willing to pay this to get a user banned from Sacrificed?",
+        color=discord.Color.blue(),
+        timestamp=datetime.utcnow()
+    )
+    ban_request_embed.set_footer(text="made by summers 2000")
+
+    view = ConfirmBanRequestView(ctx.author.id, ctx.guild.id)
+
+    try:
+        dm_message = await ctx.author.send(embed=ban_request_embed, view=view)
+        view.message = dm_message # Store the DM message to edit it later
+        BAN_REQUEST_STATES[ctx.author.id] = {"state": "awaiting_payment_confirmation", "guild_id": ctx.guild.id}
+        await ctx.send("I've sent you a DM to confirm your ban request. Please check your private messages.", ephemeral=True)
+    except discord.Forbidden:
+        await ctx.send("I couldn't send you a DM. Please make sure your DMs are open for me.", ephemeral=True)
+        if ctx.author.id in BAN_REQUEST_STATES:
+            del BAN_REQUEST_STATES[ctx.author.id]
+    except Exception as e:
+        print(f"Error sending initial ban request DM: {e}")
+        await ctx.send("An unexpected error occurred while starting your ban request. Please try again later.", ephemeral=True)
+        if ctx.author.id in BAN_REQUEST_STATES:
+            del BAN_REQUEST_STATES[ctx.author.id]
+
+@bot.event
+async def on_message(message):
+    # Ignore messages from bots to prevent loops
+    if message.author.bot:
+        return
+
+    # Check if the message is a DM and if the user is in the ban request state
+    if isinstance(message.channel, discord.DMChannel) and message.author.id in BAN_REQUEST_STATES:
+        user_state = BAN_REQUEST_STATES[message.author.id]
+
+        if user_state["state"] == "awaiting_userid":
+            try:
+                target_user_id = int(message.content.strip())
+            except ValueError:
+                await message.channel.send("Invalid User ID. Please send a valid numeric User ID.")
+                return # Keep state as awaiting_userid until valid ID is provided
+
+            requester = message.author
+            guild = bot.get_guild(user_state["guild_id"])
+            
+            if not guild:
+                await message.channel.send("It seems the server where you initiated the ban request is no longer accessible to me. Please try `!banrequest` again in the desired server.")
+                if message.author.id in BAN_REQUEST_STATES:
+                    del BAN_REQUEST_STATES[message.author.id]
+                return
+
+            log_channel = bot.get_channel(BAN_REQUEST_LOG_CHANNEL_ID)
+            
+            if not log_channel:
+                await message.channel.send("Error: The ban request log channel could not be found or is inaccessible. Please contact a bot administrator.")
+                if message.author.id in BAN_REQUEST_STATES:
+                    del BAN_REQUEST_STATES[message.author.id]
+                return
+
+            target_member = None
+            try:
+                target_member = await guild.fetch_member(target_user_id)
+            except discord.NotFound:
+                # User ID not found in the guild
+                log_embed = discord.Embed(
+                    title="🚨 Ban Request Log 🚨",
+                    description=f"**Requester:** {requester.mention} (`{requester.id}`)\n"
+                                f"**Requested Ban User ID:** `{target_user_id}`\n"
+                                f"**Status:** User ID not found in the server. No action taken.",
+                    color=discord.Color.red(),
+                    timestamp=datetime.utcnow()
+                )
+                log_embed.set_footer(text="made by summers 2000")
+                await log_channel.send(embed=log_embed)
+                await message.channel.send(f"The User ID `{target_user_id}` was not found in the server. Please ensure you provided a valid User ID from the server where you wish to ban them. The request has been logged.")
+                del BAN_REQUEST_STATES[message.author.id]
+                return
+            except discord.Forbidden:
+                # Bot does not have permission to fetch member
+                log_embed = discord.Embed(
+                    title="🚨 Ban Request Log 🚨",
+                    description=f"**Requester:** {requester.mention} (`{requester.id}`)\n"
+                                f"**Requested Ban User ID:** `{target_user_id}`\n"
+                                f"**Status:** Bot missing permissions to fetch member in the server. Cannot process request.",
+                    color=discord.Color.orange(),
+                    timestamp=datetime.utcnow()
+                )
+                log_embed.set_footer(text="made by summers 2000")
+                await log_channel.send(embed=log_embed)
+                await message.channel.send("I do not have the necessary permissions to fetch user details in the server. Please contact a bot administrator. The request has been logged.")
+                del BAN_REQUEST_STATES[message.author.id]
+                return
+            except Exception as e:
+                print(f"Error fetching member for ban request: {e}")
+                log_embed = discord.Embed(
+                    title="🚨 Ban Request Log 🚨",
+                    description=f"**Requester:** {requester.mention} (`{requester.id}`)\n"
+                                f"**Requested Ban User ID:** `{target_user_id}`\n"
+                                f"**Status:** An unexpected error occurred while fetching user data. Cannot process request. Error: `{e}`",
+                    color=discord.Color.orange(),
+                    timestamp=datetime.utcnow()
+                )
+                log_embed.set_footer(text="made by summers 2000")
+                await log_channel.send(embed=log_embed)
+                await message.channel.send(f"An unexpected error occurred while processing the User ID. The request has been logged.")
+                del BAN_REQUEST_STATES[message.author.id]
+                return
+
+            # Check if target user has the boosting role
+            if discord.utils.get(target_member.roles, id=BOOSTING_ROLE_ID):
+                log_embed = discord.Embed(
+                    title="🚨 Ban Request Log 🚨",
+                    description=f"**Requester:** {requester.mention} (`{requester.id}`)\n"
+                                f"**Target User:** {target_member.mention} (`{target_member.id}`)\n"
+                                f"**Status:** This person cannot be banned because they are boosting.",
+                    color=discord.Color.orange(),
+                    timestamp=datetime.utcnow()
+                )
+                log_embed.set_footer(text="made by summers 2000")
+                await log_channel.send(embed=log_embed)
+                await message.channel.send(f"The user {target_member.mention} cannot be banned because they are currently boosting the server. The request has been logged.")
+            else:
+                log_embed = discord.Embed(
+                    title="🚨 Ban Request Log 🚨",
+                    description=f"**Requester:** {requester.mention} (`{requester.id}`)\n"
+                                f"**Target User:** {target_member.mention} (`{target_member.id}`)\n"
+                                f"**Status:** Ban request received and logged. A moderator will review this. (User is NOT boosting)",
+                    color=discord.Color.green(),
+                    timestamp=datetime.utcnow()
+                )
+                log_embed.set_footer(text="made by summers 2000")
+                await log_channel.send(embed=log_embed)
+                await message.channel.send(f"Thank you! Your ban request for {target_member.mention} has been received and logged. A moderator will review this shortly.")
+
+            # Remove user from state after processing
+            del BAN_REQUEST_STATES[message.author.id]
+
+    # Process other commands
+    await bot.process_commands(message)
 
 
 # --- Run the Bot ---
