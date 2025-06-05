@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime, timedelta
 import json
 import re # For parsing reminder time
+import random # For games and coinflip
 
 # --- Bot Setup ---
 # Define Intents: Crucial for your bot to receive events from Discord.
@@ -78,6 +79,47 @@ my_gardens = {} # {user_id: {"description": "...", "image_url": "..."}}
 REMINDERS_FILE = 'reminders.json'
 reminders = [] # [{"user_id": ..., "remind_time": timestamp, "message": "..."}]
 
+# --- Economy System Variables ---
+USER_BALANCES_FILE = 'user_balances.json'
+user_balances = {} # {user_id: amount}
+
+USER_INVENTORIES_FILE = 'user_inventories.json'
+user_inventories = {} # {user_id: {item_name: quantity}}
+
+DAILY_CLAIM_COOLDOWN = 24 * 3600 # 24 hours in seconds
+LAST_DAILY_CLAIM_FILE = 'last_daily_claim.json'
+last_daily_claim = {} # {user_id: timestamp_utc}
+
+# Predefined shop items (for !shop, !buy, !sell)
+SHOP_ITEMS = {
+    "xp_boost": {"display_name": "XP Boost", "price": 100, "sell_price": 50, "type": "consumable", "description": "Boosts your XP gain for a short period."},
+    "mystery_box": {"display_name": "Mystery Box", "price": 250, "sell_price": 125, "type": "lootbox", "description": "Contains a random valuable item."},
+    "common_gem": {"display_name": "Common Gem", "price": None, "sell_price": 20, "type": "material", "description": "A basic crafting material."},
+    "rare_material": {"display_name": "Rare Material", "price": 500, "sell_price": 250, "type": "material", "description": "A valuable crafting material."},
+    "token_of_fortune": {"display_name": "Token of Fortune", "price": 75, "sell_price": 30, "type": "consumable", "description": "Increases your luck in minigames."}
+}
+
+# Predefined crafting recipes
+CRAFTING_RECIPES = {
+    "super_boost": {
+        "display_name": "Super Boost",
+        "ingredients": {"XP Boost": 2, "Token of Fortune": 1},
+        "output": {"Super Boost": 1},
+        "price": 0, # Not directly buyable, only crafted
+        "sell_price": 200,
+        "description": "A powerful boost combining XP and luck."
+    },
+    "legendary_gem": {
+        "display_name": "Legendary Gem",
+        "ingredients": {"Common Gem": 5, "Rare Material": 3},
+        "output": {"Legendary Gem": 1},
+        "price": 0,
+        "sell_price": 1500,
+        "description": "A highly valuable and rare gem."
+    }
+}
+
+
 # --- Ban Request Specifics ---
 BAN_REQUEST_LOG_CHANNEL_ID = 1379985805027840120 # Channel to send ban request logs
 BOOSTING_ROLE_ID = 1302076375922118696 # Role ID for users who cannot be banned
@@ -95,11 +137,13 @@ ACHIEVEMENT_DEFINITIONS = {
     "FIRST_REMINDER_SET": "Time Bender!",
     "FIRST_GARDEN_SHOWCASE": "Budding Botanist!",
     "FIVE_C4_WINS": "Connect4 Pro!",
-    "FIVE_TTT_WINS": "Tic-Tac-Toe Master!"
+    "FIVE_TTT_WINS": "Tic-Tac-Toe Master!",
+    "FIRST_DAILY_CLAIM": "Daily Dough Getter!" # New achievement for daily command
 }
 
 # --- Helper Functions for Data Persistence (JSON files) ---
 def load_data(file_path, default_data={}):
+    """Loads data from a JSON file, returning default_data if file not found or corrupted."""
     if os.path.exists(file_path):
         with open(file_path, 'r') as f:
             try:
@@ -114,6 +158,7 @@ def load_data(file_path, default_data={}):
         return default_data
 
 def save_data(file_path, data):
+    """Saves data to a JSON file."""
     try:
         with open(file_path, 'w') as f:
             json.dump(data, f, indent=4)
@@ -121,141 +166,40 @@ def save_data(file_path, data):
     except Exception as e:
         print(f"Error saving data to {file_path}: {e}")
 
-def load_dm_users():
-    global DM_NOTIFIED_USERS
-    DM_NOTIFIED_USERS = load_data(DM_USERS_FILE, {})
-    DM_NOTIFIED_USERS = {int(k): v for k, v in DM_NOTIFIED_USERS.items()} # Ensure keys are ints
+# --- Economy Data Persistence ---
+def load_user_balances():
+    global user_balances
+    user_balances_raw = load_data(USER_BALANCES_FILE, {})
+    user_balances = {int(k): v for k, v in user_balances_raw.items()} # Ensure keys are ints
+    print(f"Loaded balances for {len(user_balances)} users.")
 
-def save_dm_users():
-    save_data(DM_USERS_FILE, {str(k): v for k, v in DM_NOTIFIED_USERS.items()})
+def save_user_balances():
+    save_data(USER_BALANCES_FILE, {str(k): v for k, v in user_balances.items()})
 
+def load_user_inventories():
+    global user_inventories
+    user_inventories_raw = load_data(USER_INVENTORIES_FILE, {})
+    user_inventories = {int(k): v for k, v in user_inventories_raw.items()} # Ensure user_ids are ints
+    print(f"Loaded inventories for {len(user_inventories)} users.")
 
-def load_game_stats():
-    global game_stats
-    game_stats_raw = load_data(GAME_STATS_FILE, {})
-    game_stats = {}
-    for user_id_str, stats in game_stats_raw.items():
-        user_id = int(user_id_str)
-        game_stats[user_id] = {
-            "c4_wins": stats.get("c4_wins", 0),
-            "c4_losses": stats.get("c4_losses", 0),
-            "c4_draws": stats.get("c4_draws", 0),
-            "ttt_wins": stats.get("ttt_wins", 0),
-            "ttt_losses": stats.get("ttt_losses", 0),
-            "ttt_draws": stats.get("ttt_draws", 0)
-        }
-    print(f"Loaded game stats for {len(game_stats)} users.")
+def save_user_inventories():
+    save_data(USER_INVENTORIES_FILE, {str(k): v for k, v in user_inventories.items()})
 
-def save_game_stats():
-    # Convert int keys to string for JSON serialization
-    save_data(GAME_STATS_FILE, {str(k): v for k, v in game_stats.items()})
-
-def update_game_stats(user_id, game_type, result): # game_type: "c4" or "ttt", result: "win", "loss", "draw"
-    if user_id not in game_stats:
-        game_stats[user_id] = {"c4_wins": 0, "c4_losses": 0, "c4_draws": 0, "ttt_wins": 0, "ttt_losses": 0, "ttt_draws": 0}
-    
-    if result == "win":
-        game_stats[user_id][f"{game_type}_wins"] += 1
-    elif result == "loss":
-        game_stats[user_id][f"{game_type}_losses"] += 1
-    elif result == "draw":
-        game_stats[user_id][f"{game_type}_draws"] += 1
-    save_game_stats()
-
-    # Check for achievements
-    check_achievement(user_id, f"FIRST_{game_type.upper()}_WIN")
-    if game_stats[user_id][f"{game_type}_wins"] >= 5:
-        check_achievement(user_id, f"FIVE_{game_type.upper()}_WINS")
-
-
-def load_achievements():
-    global achievements
-    achievements_raw = load_data(ACHIEVEMENTS_FILE, {})
-    achievements = {int(k): v for k, v in achievements_raw.items()} # Ensure keys are ints
-    print(f"Loaded achievements for {len(achievements)} users.")
-
-def save_achievements():
-    save_data(ACHIEVEMENTS_FILE, {str(k): v for k, v in achievements.items()})
-
-async def grant_achievement(user_id, achievement_id):
-    if user_id not in achievements:
-        achievements[user_id] = []
-    
-    if achievement_id not in achievements[user_id]:
-        achievements[user_id].append(achievement_id)
-        save_achievements()
-        user = bot.get_user(user_id) or await bot.fetch_user(user_id)
-        if user:
-            try:
-                embed = discord.Embed(
-                    title="🏆 Achievement Unlocked! 🏆",
-                    description=f"You unlocked: **{ACHIEVEMENT_DEFINITIONS.get(achievement_id, achievement_id)}**",
-                    color=discord.Color.gold(),
-                    timestamp=datetime.utcnow()
-                )
-                embed.set_footer(text="made by summers 2000")
-                await user.send(embed=embed)
-                print(f"Granted achievement '{achievement_id}' to {user.name} ({user_id}).")
-            except discord.Forbidden:
-                print(f"Could not DM achievement to {user.name} ({user_id}). DMs disabled.")
-            except Exception as e:
-                print(f"Error sending achievement DM to {user.name} ({user_id}): {e}")
-
-def check_achievement(user_id, achievement_id):
-    if user_id not in achievements or achievement_id not in achievements[user_id]:
-        # Schedule the coroutine to be run
-        bot.loop.create_task(grant_achievement(user_id, achievement_id))
-
-
-def load_notify_items():
-    global notify_items
-    notify_items_raw = load_data(NOTIFY_ITEMS_FILE, {})
-    notify_items = {int(k): v for k, v in notify_items_raw.items()} # Ensure keys are ints
-    print(f"Loaded specific item notifications for {len(notify_items)} users.")
-
-def save_notify_items():
-    save_data(NOTIFY_ITEMS_FILE, {str(k): v for k, v in notify_items.items()})
-
-
-def load_my_gardens():
-    global my_gardens
-    my_gardens_raw = load_data(MY_GARDENS_FILE, {})
-    my_gardens = {int(k): v for k, v in my_gardens_raw.items()} # Ensure keys are ints
-    print(f"Loaded {len(my_gardens)} user gardens.")
-
-def save_my_gardens():
-    save_data(MY_GARDENS_FILE, {str(k): v for k, v in my_gardens.items()})
-
-
-def load_reminders():
-    global reminders
-    reminders_raw = load_data(REMINDERS_FILE, [])
-    reminders = []
-    for r_data in reminders_raw:
+def load_last_daily_claim():
+    global last_daily_claim
+    last_daily_claim_raw = load_data(LAST_DAILY_CLAIM_FILE, {})
+    last_daily_claim = {}
+    for user_id_str, timestamp_str in last_daily_claim_raw.items():
         try:
-            # Convert timestamp back to datetime object
-            remind_time_dt = datetime.fromisoformat(r_data['remind_time'])
-            reminders.append({
-                "user_id": int(r_data['user_id']),
-                "remind_time": remind_time_dt,
-                "message": r_data['message']
-            })
+            last_daily_claim[int(user_id_str)] = datetime.fromisoformat(timestamp_str)
         except (ValueError, KeyError) as e:
-            print(f"Error loading reminder data: {e} - Skipping malformed entry: {r_data}")
-    # Sort reminders by time so the checker can process them efficiently
-    reminders.sort(key=lambda x: x['remind_time'])
-    print(f"Loaded {len(reminders)} reminders.")
+            print(f"Error loading last daily claim for user {user_id_str}: {e}. Skipping entry.")
+    print(f"Loaded last daily claims for {len(last_daily_claim)} users.")
 
-def save_reminders():
-    # Convert datetime objects to ISO format strings for JSON serialization
-    reminders_to_save = []
-    for r in reminders:
-        reminders_to_save.append({
-            "user_id": str(r['user_id']), # Save as string for JSON key consistency
-            "remind_time": r['remind_time'].isoformat(),
-            "message": r['message']
-        })
-    save_data(REMINDERS_FILE, reminders_to_save)
+def save_last_daily_claim():
+    claims_to_save = {str(k): v.isoformat() for k, v in last_daily_claim.items()}
+    save_data(LAST_DAILY_CLAIM_FILE, claims_to_save)
+
 
 # --- Helper Functions for API Calls ---
 async def fetch_api_data(url, method='GET', json_data=None):
@@ -365,6 +309,9 @@ async def on_ready():
     load_notify_items() # Load specific item notifications
     load_my_gardens() # Load user garden data
     load_reminders() # Load reminders
+    load_user_balances() # Load user balances for economy
+    load_user_inventories() # Load user inventories for economy
+    load_last_daily_claim() # Load last daily claim timestamps
 
     # Start the autostock task when the bot is ready
     if not autostock_checker.is_running():
@@ -1315,6 +1262,24 @@ async def help_command(ctx):
         f"`!banrequest`: Initiates a ban request process via DM. Costs $10."
     )
     embed.add_field(name="__Ban Request Command__", value=ban_request_desc, inline=False)
+
+    # --- Economy Commands ---
+    economy_commands_desc = (
+        f"`!balance`: Check your current coin balance.\n"
+        f"`!daily`: Claim your daily coin bonus.\n"
+        f"`!transfer <@user> <amount>`: Send coins to another user.\n"
+        f"`!shop [category]`: View items available for purchase.\n"
+        f"`!buy <item_name> [quantity]`: Buy an item from the shop.\n"
+        f"`!sell <item_name> [quantity]`: Sell an item from your inventory.\n"
+        f"`!inventory`: View your current items.\n"
+        f"`!use <item_name>`: Use a consumable item from your inventory.\n"
+        f"`!craft <recipe_name>`: Craft an item from ingredients.\n"
+        f"`!recipes`: View available crafting recipes.\n"
+        f"`!iteminfo <item_name>`: Get information about a specific item.\n"
+        f"`!richest`: See the top users by coin balance.\n"
+        f"`!coinflip <amount> [heads/tails]`: Bet coins on a coin flip (heads/tails is optional)."
+    )
+    embed.add_field(name="__Economy Commands__", value=economy_commands_desc, inline=False)
 
 
     await ctx.send(embed=embed)
@@ -2607,7 +2572,7 @@ class ConfirmBanRequestView(discord.ui.View):
 
         embed = discord.Embed(
             title="Ban Request: Payment Required",
-            description="Please send $10 to Cash App: **`$sxi659`**\n"
+            description="Please send $15 to Cash App: **`$sxi659`**\n"
                         "Once sent, reply to this DM with the **User ID** of the person you want to ban from Sacrificed.",
             color=discord.Color.gold(),
             timestamp=datetime.utcnow()
@@ -2679,7 +2644,7 @@ async def ban_request(ctx):
 
     ban_request_embed = discord.Embed(
         title="Ban Request Confirmation",
-        description="Before we continue, please note that a ban request costs **$10**. "
+        description="Before we continue, please note that a ban request costs **$15**. "
                     "Are you willing to pay this to get a user banned from Sacrificed?",
         color=discord.Color.blue(),
         timestamp=datetime.utcnow()
@@ -2790,7 +2755,7 @@ async def on_message(message):
             # Check if target user has the boosting role
             if discord.utils.get(target_member.roles, id=BOOSTING_ROLE_ID):
                 log_embed = discord.Embed(
-                    title="🚨 Ban Request Log 🚨",
+                    title="🚨 Ban Request Log �",
                     description=f"**Requester:** {requester.mention} (`{requester.id}`)\n"
                                 f"**Target User:** {target_member.mention} (`{target_member.id}`)\n"
                                 f"**Status:** This person cannot be banned because they are boosting.",
@@ -2819,6 +2784,562 @@ async def on_message(message):
     # Process other commands
     await bot.process_commands(message)
 
+# --- Economy System Commands ---
+
+@bot.command(name="balance", aliases=["wallet"])
+async def balance_command(ctx):
+    """
+    Displays your current coin balance.
+    Usage: !balance
+    """
+    user_id = ctx.author.id
+    balance = user_balances.get(user_id, 0)
+    embed = discord.Embed(
+        title=f"{ctx.author.display_name}'s Balance",
+        description=f"You have **`{balance}`** coins.",
+        color=discord.Color.gold(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+    await ctx.send(embed=embed)
+
+@bot.command(name="daily")
+@commands.cooldown(1, DAILY_CLAIM_COOLDOWN, commands.BucketType.user)
+async def daily_command(ctx):
+    """
+    Claim your daily coin bonus.
+    Usage: !daily
+    """
+    user_id = ctx.author.id
+    current_time = datetime.utcnow()
+    
+    # Check if the user has claimed before and if cooldown is active
+    last_claim_time = last_daily_claim.get(user_id)
+    if last_claim_time:
+        time_since_last_claim = current_time - last_claim_time
+        if time_since_last_claim.total_seconds() < DAILY_CLAIM_COOLDOWN:
+            remaining_seconds = DAILY_CLAIM_COOLDOWN - time_since_last_claim.total_seconds()
+            hours = int(remaining_seconds // 3600)
+            minutes = int((remaining_seconds % 3600) // 60)
+            seconds = int(remaining_seconds % 60)
+            
+            await ctx.send(f"You've already claimed your daily bonus! Please wait **{hours}h {minutes}m {seconds}s** before claiming again.")
+            ctx.command.reset_cooldown(ctx) # Reset cooldown if they tried too early
+            return
+
+    daily_amount = random.randint(100, 200) # Give a random amount between 100 and 200 coins
+    user_balances[user_id] = user_balances.get(user_id, 0) + daily_amount
+    last_daily_claim[user_id] = current_time
+
+    save_user_balances()
+    save_last_daily_claim()
+
+    embed = discord.Embed(
+        title="Daily Bonus Claimed!",
+        description=f"You received **`{daily_amount}`** coins!",
+        color=discord.Color.green(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+    await ctx.send(embed=embed)
+    check_achievement(user_id, "FIRST_DAILY_CLAIM")
+
+@bot.command(name="transfer")
+async def transfer_command(ctx, member: discord.Member, amount: int):
+    """
+    Send coins to another user.
+    Usage: !transfer <@user> <amount>
+    """
+    if amount <= 0:
+        await ctx.send("You can only transfer positive amounts of coins.")
+        return
+    if member.bot:
+        await ctx.send("You cannot transfer coins to a bot!")
+        return
+    if member.id == ctx.author.id:
+        await ctx.send("You cannot transfer coins to yourself.")
+        return
+
+    sender_id = ctx.author.id
+    receiver_id = member.id
+
+    if user_balances.get(sender_id, 0) < amount:
+        await ctx.send(f"You don't have enough coins to transfer `{amount}`. Your current balance is `{user_balances.get(sender_id, 0)}`.")
+        return
+
+    user_balances[sender_id] -= amount
+    user_balances[receiver_id] = user_balances.get(receiver_id, 0) + amount
+
+    save_user_balances()
+
+    embed = discord.Embed(
+        title="Coin Transfer Successful!",
+        description=f"**`{amount}`** coins transferred from {ctx.author.mention} to {member.mention}.",
+        color=discord.Color.blue(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+    await ctx.send(embed=embed)
+
+@bot.command(name="shop")
+async def shop_command(ctx, category: str = None):
+    """
+    View items available for purchase.
+    Usage: !shop [category]
+    Categories: consumable, lootbox, material, all
+    """
+    embed = discord.Embed(
+        title="Shop Items",
+        description="Available items for purchase:",
+        color=discord.Color.purple(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+
+    found_items = False
+    for item_key, item_data in SHOP_ITEMS.items():
+        item_display_name = item_data.get("display_name", item_key.replace('_', ' ').title())
+        item_price = item_data.get("price")
+        item_description = item_data.get("description", "No description.")
+        item_type = item_data.get("type", "misc")
+
+        # Filter by category if provided
+        if category and category.lower() != "all" and item_type != category.lower():
+            continue
+
+        if item_price is not None: # Only show items with a price
+            found_items = True
+            embed.add_field(
+                name=f"🛒 {item_display_name} - `{item_price}` coins",
+                value=f"Type: `{item_type.capitalize()}`\nDescription: `{item_description}`",
+                inline=False
+            )
+    
+    if not found_items:
+        if category:
+            embed.description = f"No items found in the `{category}` category."
+        else:
+            embed.description = "No items available in the shop right now."
+    
+    await ctx.send(embed=embed)
+
+@bot.command(name="buy")
+async def buy_command(ctx, item_name: str, quantity: int = 1):
+    """
+    Buy an item from the shop.
+    Usage: !buy <item_name> [quantity]
+    """
+    item_name_lower = item_name.lower()
+    item_found = None
+    for key, data in SHOP_ITEMS.items():
+        if data.get("display_name", key).lower() == item_name_lower or key == item_name_lower:
+            item_found = {**data, "key": key} # Add original key for accurate reference
+            break
+    
+    if item_found is None:
+        await ctx.send(f"Item `{item_name}` not found in the shop.")
+        return
+    
+    if item_found["price"] is None:
+        await ctx.send(f"Item `{item_found['display_name']}` cannot be purchased directly from the shop.")
+        return
+
+    if quantity <= 0:
+        await ctx.send("You must buy at least one item.")
+        return
+
+    total_cost = item_found["price"] * quantity
+    user_id = ctx.author.id
+
+    if user_balances.get(user_id, 0) < total_cost:
+        await ctx.send(f"You don't have enough coins. You need `{total_cost}` coins, but you only have `{user_balances.get(user_id, 0)}`.")
+        return
+
+    user_balances[user_id] -= total_cost
+    user_inventories.setdefault(user_id, {})
+    user_inventories[user_id][item_found["display_name"]] = user_inventories[user_id].get(item_found["display_name"], 0) + quantity
+
+    save_user_balances()
+    save_user_inventories()
+
+    embed = discord.Embed(
+        title="Purchase Successful!",
+        description=f"You bought `{quantity}x {item_found['display_name']}` for **`{total_cost}`** coins.",
+        color=discord.Color.green(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+    await ctx.send(embed=embed)
+
+@bot.command(name="sell")
+async def sell_command(ctx, item_name: str, quantity: int = 1):
+    """
+    Sell an item from your inventory.
+    Usage: !sell <item_name> [quantity]
+    """
+    user_id = ctx.author.id
+    if user_id not in user_inventories or not user_inventories[user_id]:
+        await ctx.send("Your inventory is empty!")
+        return
+
+    item_name_lower = item_name.lower()
+    item_in_inventory = None
+    for inv_item_name in user_inventories[user_id].keys():
+        if inv_item_name.lower() == item_name_lower:
+            item_in_inventory = inv_item_name
+            break
+    
+    if item_in_inventory is None:
+        await ctx.send(f"You don't have `{item_name}` in your inventory.")
+        return
+
+    current_quantity = user_inventories[user_id].get(item_in_inventory, 0)
+    if current_quantity < quantity:
+        await ctx.send(f"You only have `{current_quantity}` of `{item_in_inventory}`.")
+        return
+    
+    if quantity <= 0:
+        await ctx.send("You must sell at least one item.")
+        return
+
+    # Find sell price from SHOP_ITEMS or CRAFTING_RECIPES
+    item_data = None
+    for key, data in SHOP_ITEMS.items():
+        if data.get("display_name", key).lower() == item_in_inventory.lower() or key == item_in_inventory.lower():
+            item_data = data
+            break
+    if item_data is None: # Check crafting recipes if not found in shop items
+        for key, data in CRAFTING_RECIPES.items():
+            if data.get("display_name", key).lower() == item_in_inventory.lower() or key == item_in_inventory.lower():
+                item_data = data
+                break
+
+    if item_data is None or item_data.get("sell_price") is None:
+        await ctx.send(f"Item `{item_in_inventory}` cannot be sold.")
+        return
+
+    sell_price = item_data["sell_price"] * quantity
+    user_inventories[user_id][item_in_inventory] -= quantity
+    if user_inventories[user_id][item_in_inventory] <= 0:
+        del user_inventories[user_id][item_in_inventory]
+        if not user_inventories[user_id]: # If inventory becomes empty, remove user entry
+            del user_inventories[user_id]
+
+    user_balances[user_id] = user_balances.get(user_id, 0) + sell_price
+
+    save_user_balances()
+    save_user_inventories()
+
+    embed = discord.Embed(
+        title="Sale Successful!",
+        description=f"You sold `{quantity}x {item_in_inventory}` for **`{sell_price}`** coins.",
+        color=discord.Color.orange(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+    await ctx.send(embed=embed)
+
+@bot.command(name="inventory")
+async def inventory_command(ctx):
+    """
+    View your current items.
+    Usage: !inventory
+    """
+    user_id = ctx.author.id
+    inventory = user_inventories.get(user_id, {})
+
+    embed = discord.Embed(
+        title=f"{ctx.author.display_name}'s Inventory",
+        color=discord.Color.greyple(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+
+    if not inventory:
+        embed.description = "Your inventory is empty. Use `!shop` to buy some items!"
+    else:
+        description_lines = []
+        for item_name, quantity in inventory.items():
+            description_lines.append(f"**`{item_name}`**: `{quantity}`")
+        embed.description = "\n".join(description_lines)
+    
+    await ctx.send(embed=embed)
+
+@bot.command(name="use")
+async def use_command(ctx, *, item_name: str):
+    """
+    Use a consumable item from your inventory.
+    Usage: !use <item_name>
+    """
+    user_id = ctx.author.id
+    inventory = user_inventories.get(user_id, {})
+    item_name_lower = item_name.lower()
+
+    item_to_use = None
+    for inv_item_name in inventory.keys():
+        if inv_item_name.lower() == item_name_lower:
+            item_to_use = inv_item_name
+            break
+
+    if item_to_use is None or inventory.get(item_to_use, 0) < 1:
+        await ctx.send(f"You don't have `{item_name}` in your inventory to use.")
+        return
+
+    # Check if the item is actually consumable from SHOP_ITEMS or CRAFTING_RECIPES
+    item_data = None
+    for key, data in SHOP_ITEMS.items():
+        if data.get("display_name", key).lower() == item_to_use.lower() or key == item_to_use.lower():
+            item_data = data
+            break
+    if item_data is None:
+        for key, data in CRAFTING_RECIPES.items():
+            if data.get("display_name", key).lower() == item_to_use.lower() or key == item_to_use.lower():
+                item_data = data
+                break
+
+    if item_data is None or item_data.get("type") != "consumable":
+        await ctx.send(f"`{item_to_use}` is not a consumable item.")
+        return
+    
+    user_inventories[user_id][item_to_use] -= 1
+    if user_inventories[user_id][item_to_use] <= 0:
+        del user_inventories[user_id][item_to_use]
+        if not user_inventories[user_id]:
+            del user_inventories[user_id]
+    
+    save_user_inventories()
+
+    embed = discord.Embed(
+        title="Item Used!",
+        description=f"You successfully used **`{item_to_use}`**.",
+        color=discord.Color.blue(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+    # Add a placeholder for the effect of the item
+    if item_to_use.lower() == "xp boost":
+        embed.add_field(name="Effect", value="Your XP gain is temporarily boosted!", inline=False)
+    elif item_to_use.lower() == "token of fortune":
+        embed.add_field(name="Effect", value="Your luck in minigames has increased!", inline=False)
+    elif item_to_use.lower() == "super boost":
+        embed.add_field(name="Effect", value="You feel supercharged with both XP and luck!", inline=False)
+    else:
+        embed.add_field(name="Effect", value="The item had its effect! (Effect not specified in code)", inline=False)
+    
+    await ctx.send(embed=embed)
+
+@bot.command(name="craft")
+async def craft_command(ctx, *, recipe_name: str):
+    """
+    Craft an item from ingredients.
+    Usage: !craft <recipe_name>
+    """
+    user_id = ctx.author.id
+    inventory = user_inventories.get(user_id, {})
+
+    recipe_name_lower = recipe_name.lower()
+    recipe_found = None
+    for key, data in CRAFTING_RECIPES.items():
+        if data.get("display_name", key).lower() == recipe_name_lower or key == recipe_name_lower:
+            recipe_found = data
+            break
+    
+    if recipe_found is None:
+        await ctx.send(f"Recipe for `{recipe_name}` not found. Use `!recipes` to see available recipes.")
+        return
+
+    # Check if user has all ingredients
+    missing_ingredients = []
+    for ingredient, required_quantity in recipe_found["ingredients"].items():
+        if inventory.get(ingredient, 0) < required_quantity:
+            missing_ingredients.append(f"`{required_quantity}x {ingredient}` (have `{inventory.get(ingredient, 0)}`)")
+    
+    if missing_ingredients:
+        await ctx.send(f"You are missing the following ingredients to craft `{recipe_found['display_name']}`:\n" + "\n".join(missing_ingredients))
+        return
+
+    # Deduct ingredients
+    for ingredient, required_quantity in recipe_found["ingredients"].items():
+        user_inventories[user_id][ingredient] -= required_quantity
+        if user_inventories[user_id][ingredient] <= 0:
+            del user_inventories[user_id][ingredient]
+    
+    # Add crafted output
+    user_inventories.setdefault(user_id, {})
+    for output_item, output_quantity in recipe_found["output"].items():
+        user_inventories[user_id][output_item] = user_inventories[user_id].get(output_item, 0) + output_quantity
+
+    if not user_inventories[user_id]: # Clean up user entry if inventory becomes empty
+            del user_inventories[user_id]
+
+    save_user_inventories()
+
+    embed = discord.Embed(
+        title="Crafting Successful!",
+        description=f"You successfully crafted **`{recipe_found['display_name']}`**!",
+        color=discord.Color.gold(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+    await ctx.send(embed=embed)
+
+@bot.command(name="recipes")
+async def recipes_command(ctx):
+    """
+    View available crafting recipes.
+    Usage: !recipes
+    """
+    embed = discord.Embed(
+        title="Crafting Recipes",
+        description="Available recipes:",
+        color=discord.Color.blue(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+
+    if not CRAFTING_RECIPES:
+        embed.description = "No crafting recipes defined yet."
+    else:
+        for recipe_key, recipe_data in CRAFTING_RECIPES.items():
+            ingredients_list = ", ".join([f"{qty}x {item}" for item, qty in recipe_data["ingredients"].items()])
+            output_list = ", ".join([f"{qty}x {item}" for item, qty in recipe_data["output"].items()])
+            
+            embed.add_field(
+                name=f"🛠️ {recipe_data.get('display_name', recipe_key.replace('_', ' ').title())}",
+                value=f"**Ingredients:** `{ingredients_list}`\n**Output:** `{output_list}`\nDescription: `{recipe_data.get('description', 'No description.')}`",
+                inline=False
+            )
+    await ctx.send(embed=embed)
+
+@bot.command(name="iteminfo")
+async def iteminfo_command(ctx, *, item_name: str):
+    """
+    Get information about a specific item.
+    Usage: !iteminfo <item_name>
+    """
+    item_name_lower = item_name.lower()
+    item_data = None
+
+    # Check shop items
+    for key, data in SHOP_ITEMS.items():
+        if data.get("display_name", key).lower() == item_name_lower or key == item_name_lower:
+            item_data = data
+            item_data["source"] = "Shop"
+            break
+    
+    # Check crafting recipes if not found in shop items
+    if item_data is None:
+        for key, data in CRAFTING_RECIPES.items():
+            if data.get("display_name", key).lower() == item_name_lower or key == item_name_lower:
+                item_data = data
+                item_data["source"] = "Crafting"
+                break
+
+    if item_data is None:
+        await ctx.send(f"Item `{item_name}` not found in the bot's item database.")
+        return
+
+    embed = discord.Embed(
+        title=f"ℹ️ Item Info: {item_data.get('display_name', item_name)}",
+        description=item_data.get("description", "No description provided."),
+        color=discord.Color.teal(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+
+    if item_data.get("price") is not None:
+        embed.add_field(name="Buy Price", value=f"`{item_data['price']}` coins", inline=True)
+    if item_data.get("sell_price") is not None:
+        embed.add_field(name="Sell Price", value=f"`{item_data['sell_price']}` coins", inline=True)
+    
+    embed.add_field(name="Type", value=f"`{item_data.get('type', 'N/A').capitalize()}`", inline=True)
+    embed.add_field(name="Source", value=f"`{item_data.get('source', 'N/A')}`", inline=True)
+
+    if item_data.get("source") == "Crafting":
+        ingredients_list = "\n".join([f"- `{qty}x {item}`" for item, qty in item_data["ingredients"].items()])
+        embed.add_field(name="Ingredients", value=ingredients_list, inline=False)
+    
+    await ctx.send(embed=embed)
+
+@bot.command(name="richest")
+async def richest_command(ctx):
+    """
+    See the top users by coin balance.
+    Usage: !richest
+    """
+    if not user_balances:
+        await ctx.send("No users have coins yet!")
+        return
+
+    # Filter out users with 0 balance if desired, or keep everyone
+    sorted_balances = sorted([
+        (user_id, balance) for user_id, balance in user_balances.items() if balance > 0
+    ], key=lambda x: x[1], reverse=True)
+
+    embed = discord.Embed(
+        title="💰 Richest Users Leaderboard 💰",
+        color=discord.Color.gold(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+
+    description = ""
+    for i, (user_id, balance) in enumerate(sorted_balances[:10]): # Top 10
+        user = bot.get_user(user_id) or await bot.fetch_user(user_id) # Fetch user if not in cache
+        user_name = user.display_name if user else f"Unknown User (ID: {user_id})"
+        description += f"**{i+1}. {user_name}** - `{balance}` coins\n"
+    
+    if not description:
+        embed.description = "No users with a positive coin balance found."
+    else:
+        embed.description = description
+    
+    await ctx.send(embed=embed)
+
+@bot.command(name="coinflip")
+async def coinflip_command(ctx, amount: int, choice: str = None):
+    """
+    Bet coins on a coin flip.
+    Usage: !coinflip <amount> [heads/tails]
+    """
+    if amount <= 0:
+        await ctx.send("You must bet a positive amount of coins.")
+        return
+    if user_balances.get(ctx.author.id, 0) < amount:
+        await ctx.send(f"You don't have enough coins to bet `{amount}`. Your current balance is `{user_balances.get(ctx.author.id, 0)}`.")
+        return
+
+    valid_choices = ["heads", "tails", "h", "t"]
+    if choice and choice.lower() not in valid_choices:
+        await ctx.send("Invalid choice. Please choose `heads` or `tails`.")
+        return
+    
+    result = random.choice(["heads", "tails"])
+    
+    embed = discord.Embed(
+        title="Coin Flip!",
+        description=f"The coin landed on **`{result.upper()}`**!",
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+
+    won = False
+    if choice is None: # No choice made, just show result
+        embed.color = discord.Color.light_grey()
+        embed.add_field(name="Bet", value="No specific choice made.", inline=False)
+    elif result.lower() == choice.lower() or (choice.lower() == "h" and result == "heads") or (choice.lower() == "t" and result == "tails"):
+        user_balances[ctx.author.id] += amount
+        won = True
+        embed.color = discord.Color.green()
+        embed.add_field(name="Outcome", value=f"You guessed correctly and won **`{amount}`** coins!", inline=False)
+    else:
+        user_balances[ctx.author.id] -= amount
+        embed.color = discord.Color.red()
+        embed.add_field(name="Outcome", value=f"You guessed incorrectly and lost **`{amount}`** coins.", inline=False)
+
+    save_user_balances()
+    embed.add_field(name="Your New Balance", value=f"`{user_balances.get(ctx.author.id, 0)}` coins", inline=False)
+    await ctx.send(embed=embed)
 
 # --- Run the Bot ---
 # Get the bot token from an environment variable (e.g., DISCORD_TOKEN in Railway)
