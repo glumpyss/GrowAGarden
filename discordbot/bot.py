@@ -1729,7 +1729,7 @@ class ConfirmBanRequestView(discord.ui.View):
         embed = discord.Embed(
             title="Ban Request: Payment Required",
             description="Please send $10 to Cash App: **`$sxi659`**\n"
-                        "Once sent, reply to this DM with the **User ID** of the person you want to ban from Sacrificed.",
+                        "Once sent, reply to this DM with the **User ID** of the person you want to ban from Sacrificed. [Warning: Make sure you put the userid of the person you want to ban into cashapp aswell]",
             color=discord.Color.gold(),
             timestamp=datetime.utcnow()
         )
