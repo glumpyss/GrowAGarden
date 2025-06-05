@@ -32,6 +32,7 @@ WEATHER_API_URL = "https://growagardenapi.vercel.app/api/GetWeather" # This is a
 # AUTOSTOCK_CHANNEL_ID will be set dynamically when the !autostock on command is used.
 AUTOSTOCK_CHANNEL_ID = None
 # GARDEN_SHOWCASE_CHANNEL_ID needs to be set to an actual channel ID where you want garden showcases to be posted
+# IMPORTANT: Replace this with your actual channel ID! If this is incorrect, the bot might fail to send messages.
 GARDEN_SHOWCASE_CHANNEL_ID = 1379734424895361054 # Channel for !showgardens (e.g., 123456789012345678) - REPLACE WITH ACTUAL ID
 
 STOCK_LOGS = [] # Stores a history of stock changes (currently seeds only)
@@ -44,8 +45,10 @@ active_c4_games = {} # {channel_id: Connect4Game instance}
 active_tictactoe_games = {} # {channel_id: TicTacToeGame instance}
 
 # --- DM Notification Specifics ---
+# IMPORTANT: Replace these with your actual role IDs!
 DM_NOTIFY_ROLE_ID = 1302076375922118696  # The specific role ID for DM notifications
 DM_BYPASS_ROLE_ID = 1379754489724145684 # New role ID that can bypass DM notification command requirements
+# IMPORTANT: Replace this with your actual channel ID!
 DM_NOTIFICATION_LOG_CHANNEL_ID = 1379734424895361054 # Channel to log stock changes for DM notifications
 
 # DM_NOTIFIED_USERS now stores a dictionary of preferences per user:
@@ -127,6 +130,7 @@ LOTTO_TICKET_PRICE = 100 # Price per lottery ticket
 LOTTO_MIN_PLAYERS = 2 # Minimum players for a lottery draw
 
 # --- Ban Request Specifics ---
+# IMPORTANT: Replace these with your actual channel and role IDs!
 BAN_REQUEST_LOG_CHANNEL_ID = 1379985805027840120 # Channel to send ban request logs
 BOOSTING_ROLE_ID = 1302076375922118696 # Role ID for users who cannot be banned
 
@@ -152,17 +156,21 @@ ACHIEVEMENT_DEFINITIONS = {
 # --- Helper Functions for Data Persistence (JSON files) ---
 def load_data(file_path, default_data={}):
     """Loads data from a JSON file, returning default_data if file not found or corrupted."""
+    print(f"Attempting to load data from {file_path}...")
     if os.path.exists(file_path):
         with open(file_path, 'r') as f:
             try:
                 data = json.load(f)
-                print(f"Loaded data from {file_path}.")
+                print(f"Successfully loaded data from {file_path}.")
                 return data
-            except json.JSONDecodeError:
-                print(f"Error decoding {file_path}. File might be empty or corrupted. Returning default data.")
+            except json.JSONDecodeError as e:
+                print(f"ERROR: JSON decoding failed for {file_path}. File might be empty or corrupted: {e}. Returning default data.")
+                return default_data
+            except Exception as e:
+                print(f"ERROR: An unexpected error occurred while reading {file_path}: {e}. Returning default data.")
                 return default_data
     else:
-        print(f"{file_path} not found. Starting with empty data.")
+        print(f"INFO: {file_path} not found. Starting with default data.")
         return default_data
 
 def save_data(file_path, data):
@@ -170,27 +178,31 @@ def save_data(file_path, data):
     try:
         with open(file_path, 'w') as f:
             json.dump(data, f, indent=4)
-        print(f"Saved data to {file_path}.")
+        print(f"Successfully saved data to {file_path}.")
     except Exception as e:
-        print(f"Error saving data to {file_path}: {e}")
+        print(f"ERROR: Failed to save data to {file_path}: {e}")
 
 # --- Economy Data Persistence ---
 def load_user_balances():
     global user_balances
     user_balances_raw = load_data(USER_BALANCES_FILE, {})
-    user_balances = {int(k): v for k, v in user_balances_raw.items()} # Ensure keys are ints
+    # Ensure keys are integers, as Discord user IDs are integers
+    user_balances = {int(k): v for k, v in user_balances_raw.items()}
     print(f"Loaded balances for {len(user_balances)} users.")
 
 def save_user_balances():
+    # Convert keys back to strings for JSON serialization
     save_data(USER_BALANCES_FILE, {str(k): v for k, v in user_balances.items()})
 
 def load_user_inventories():
     global user_inventories
     user_inventories_raw = load_data(USER_INVENTORIES_FILE, {})
-    user_inventories = {int(k): v for k, v in user_inventories_raw.items()} # Ensure user_ids are ints
+    # Ensure user_ids are integers
+    user_inventories = {int(k): v for k, v in user_inventories_raw.items()}
     print(f"Loaded inventories for {len(user_inventories)} users.")
 
 def save_user_inventories():
+    # Convert user IDs back to strings for JSON serialization
     save_data(USER_INVENTORIES_FILE, {str(k): v for k, v in user_inventories.items()})
 
 def load_last_daily_claim():
@@ -202,7 +214,7 @@ def load_last_daily_claim():
             # Parse datetime with timezone info
             last_daily_claim[int(user_id_str)] = datetime.fromisoformat(timestamp_str)
         except (ValueError, KeyError) as e:
-            print(f"Error loading last daily claim for user {user_id_str}: {e}. Skipping entry.")
+            print(f"WARNING: Error loading last daily claim for user {user_id_str}: {e}. Skipping entry.")
     print(f"Loaded last daily claims for {len(last_daily_claim)} users.")
 
 def save_last_daily_claim():
@@ -275,9 +287,9 @@ async def check_achievement(user_id, achievement_id, ctx=None):
                 embed.set_footer(text="made by summers 2000")
                 await ctx.send(embed=embed)
             except discord.Forbidden:
-                print(f"Could not send achievement message to channel {ctx.channel.id} for user {user_id}.")
+                print(f"WARNING: Could not send achievement message to channel {ctx.channel.id} for user {user_id} (Forbidden).")
             except Exception as e:
-                print(f"Error sending achievement message: {e}")
+                print(f"ERROR: Error sending achievement message for user {user_id}: {e}")
 
 # --- DM Users Persistence ---
 def load_dm_users():
@@ -320,7 +332,7 @@ def load_reminders():
             r['remind_time'] = datetime.fromisoformat(r['remind_time']).astimezone(timezone.UTC)
             reminders.append(r)
         except (ValueError, KeyError) as e:
-            print(f"Error loading reminder: {e}. Skipping entry.")
+            print(f"WARNING: Error loading reminder: {e}. Skipping entry.")
     reminders.sort(key=lambda x: x['remind_time']) # Ensure sorted after loading
     print(f"Loaded {len(reminders)} reminders.")
 
@@ -354,8 +366,8 @@ async def fetch_api_data(url, method='GET', json_data=None):
     """Fetches data from a given API URL."""
     async with aiohttp.ClientSession() as session:
         try:
+            print(f"API Request: {method} {url}")
             async with session.request(method, url, json=json_data) as response:
-                print(f"API Request: {method} {url}")
                 print(f"API Response Status ({url}): {response.status}")
                 
                 # Check for successful response before trying to parse JSON
@@ -452,6 +464,7 @@ async def on_ready():
     print("Bot is ready to receive commands!")
     
     # Load data for persistence
+    print("Loading persistent data...")
     load_dm_users()
     load_game_stats()
     load_achievements()
@@ -462,6 +475,7 @@ async def on_ready():
     load_user_inventories()
     load_last_daily_claim()
     load_lotto_data()
+    print("All persistent data loaded.")
 
     # Start the autostock task when the bot is ready
     if not autostock_checker.is_running():
@@ -509,7 +523,7 @@ async def on_command_error(ctx, error):
         embed.set_footer(text="made by summers 2000")
         await ctx.send(embed=embed, delete_after=10)
     else:
-        print(f"An unhandled error occurred in command '{ctx.command.name}': {error}")
+        print(f"ERROR: An unhandled error occurred in command '{ctx.command.name}': {error}")
         embed = discord.Embed(
             title="Command Error",
             description=f"**An unexpected error occurred:** `{error}`. My apologies! Please try again later or contact an administrator.",
@@ -539,7 +553,7 @@ async def get_all_stock(ctx):
         embed = create_stock_embed(all_stock_data, title="Comprehensive Stock Overview")
         await ctx.send(embed=embed)
     except Exception as e:
-        print(f"Error in !stockall command: {e}")
+        print(f"ERROR: Error in !stockall command: {e}")
         embed = discord.Embed(
             title="Error",
             description=f"An unexpected error occurred while processing the `!stockall` command: `{e}`",
@@ -619,7 +633,7 @@ async def get_stock_by_category(ctx, category: str = None):
             )
         await ctx.send(embed=embed)
     except Exception as e:
-        print(f"Error in !stock command for category '{category}': {e}")
+        print(f"ERROR: Error in !stock command for category '{category}': {e}")
         embed = discord.Embed(
             title="Error",
             description=f"An unexpected error occurred while processing the `!stock {category}` command: `{e}`",
@@ -747,11 +761,11 @@ async def autostock_checker():
                             STOCK_LOGS.pop(0) # Remove the oldest log
 
                 except discord.Forbidden:
-                    print(f"Autostock: Bot does not have permission to send messages/embeds in channel {channel.name} ({channel.id}). Please check bot permissions!")
+                    print(f"ERROR: Autostock: Bot does not have permission to send messages/embeds in channel {channel.name} ({channel.id}). Please check bot permissions!")
                 except Exception as e:
-                    print(f"Autostock: An unexpected error occurred while sending embed: {e}")
+                    print(f"ERROR: Autostock: An unexpected error occurred while sending embed: {e}")
             else:
-                print(f"Autostock: Configured channel with ID {AUTOSTOCK_CHANNEL_ID} not found or inaccessible. Disabling autostock.")
+                print(f"WARNING: Autostock: Configured channel with ID {AUTOSTOCK_CHANNEL_ID} not found or inaccessible. Disabling autostock.")
                 AUTOSTOCK_ENABLED = False
         else:
             print("Autostock: Not enabled or channel not set, skipping public channel update.")
@@ -787,9 +801,12 @@ async def autostock_checker():
                     await log_channel.send(log_message)
                     print(f"Logged new DM-monitored items to channel {log_channel.name} ({log_channel.id}).")
                 except discord.Forbidden:
-                    print(f"Bot does not have permission to send messages in DM notification log channel {log_channel.id}.")
+                    print(f"WARNING: Bot does not have permission to send messages in DM notification log channel {log_channel.id}.")
                 except Exception as e:
-                    print(f"Error sending log to DM notification channel: {e}")
+                    print(f"ERROR: Error sending log to DM notification channel: {e}")
+            else:
+                print(f"WARNING: DM notification log channel with ID {DM_NOTIFICATION_LOG_CHANNEL_ID} not found or inaccessible.")
+
 
             dm_embed = discord.Embed(
                 title=f"GrowAGarden Stock Alert! ({dm_type.capitalize()})",
@@ -810,10 +827,10 @@ async def autostock_checker():
                         try:
                             user = await bot.fetch_user(user_id)
                         except discord.NotFound:
-                            print(f"DM User {user_id} not found. Skipping DM for category {dm_type}.")
+                            print(f"WARNING: DM User {user_id} not found. Skipping DM for category {dm_type}.")
                             continue
                         except Exception as e:
-                            print(f"Error fetching DM user {user_id} for category {dm_type}: {e}. Skipping DM.")
+                            print(f"ERROR: Error fetching DM user {user_id} for category {dm_type}: {e}. Skipping DM.")
                             continue
 
                     if user:
@@ -822,9 +839,9 @@ async def autostock_checker():
                             print(f"Sent DM notification to {user.name} ({user.id}) for new {dm_type}.")
                             await check_achievement(user.id, "FIRST_DM_NOTIFICATION", None) # No ctx for DM
                         except discord.Forbidden:
-                            print(f"Could not send DM to {user.name} ({user.id}). User has DMs disabled or blocked bot.")
+                            print(f"WARNING: Could not send DM to {user.name} ({user.id}). User has DMs disabled or blocked bot.")
                         except Exception as e:
-                            print(f"An unexpected error occurred while sending DM to {user.name} ({user.id}): {e}")
+                            print(f"ERROR: An unexpected error occurred while sending DM to {user.name} ({user.id}): {e}")
 
         # Update the last known status for this category AFTER sending DMs
         LAST_KNOWN_DM_ITEM_STATUS[api_category_key] = currently_available_dm_items
@@ -853,10 +870,10 @@ async def autostock_checker():
                 try:
                     user = await bot.fetch_user(user_id)
                 except discord.NotFound:
-                    print(f"NotifyItem DM User {user_id} not found. Skipping DM for item '{monitored_item_name}'.")
+                    print(f"WARNING: NotifyItem DM User {user_id} not found. Skipping DM for item '{monitored_item_name}'.")
                     continue
                 except Exception as e:
-                    print(f"Error fetching NotifyItem DM user {user_id} for item '{monitored_item_name}': {e}. Skipping DM.")
+                    print(f"ERROR: Error fetching NotifyItem DM user {user_id} for item '{monitored_item_name}': {e}. Skipping DM.")
                     continue
 
             if user:
@@ -872,9 +889,9 @@ async def autostock_checker():
                     print(f"Sent DM notification to {user.name} ({user.id}) for item '{monitored_item_name}'.")
                     await check_achievement(user.id, "FIRST_DM_NOTIFICATION", None) # Could make a specific one for this too
                 except discord.Forbidden:
-                    print(f"Could not send DM to {user.name} ({user.id}). DMs disabled for item notification.")
+                    print(f"WARNING: Could not send DM to {user.name} ({user.id}). DMs disabled for item notification.")
                 except Exception as e:
-                    print(f"An unexpected error occurred while sending item DM to {user.name} ({user.id}): {e}")
+                    print(f"ERROR: An unexpected error occurred while sending item DM to {user.name} ({user.id}): {e}")
         
         # Update specific item status for this user
         if found_item_in_stock:
@@ -886,7 +903,9 @@ async def autostock_checker():
 @autostock_checker.before_loop
 async def before_autostock_checker():
     """Waits for the bot to be ready before starting the autostock loop."""
+    print("Waiting for bot to be ready before starting autostock checker...")
     await bot.wait_until_ready() # Ensures bot is connected before fetching data
+    print("Bot is ready, autostock checker proceeding.")
 
 @bot.command(name="restocklogs")
 @commands.cooldown(1, 10, commands.BucketType.user) # 1 use per 10 seconds per user
@@ -935,7 +954,7 @@ async def next_restock_time(ctx):
         # Check for specific keys that might indicate an error or unexpected format
         # The API is documented to return 'timeUntilRestock' (seconds) and 'humanReadableTime'
         if 'timeUntilRestock' not in restock_data or 'humanReadableTime' not in restock_data:
-            print(f"API Error: Missing expected keys in Restock-Time API response. Raw data: {restock_data}")
+            print(f"ERROR: API Error: Missing expected keys in Restock-Time API response. Raw data: {restock_data}")
             await ctx.send("Apologies, the restock API returned data in an unexpected format. Expected `timeUntilRestock` and `humanReadableTime`. Please try again later or contact an administrator.")
             return
 
@@ -956,7 +975,7 @@ async def next_restock_time(ctx):
         await ctx.send(embed=embed)
 
     except Exception as e:
-        print(f"Error in !restock command: {e}")
+        print(f"ERROR: Error in !restock command: {e}")
         embed = discord.Embed(
             title="Error",
             description=f"An unexpected error occurred while processing the `!restock` command: `{e}`",
@@ -1001,7 +1020,7 @@ async def get_weather(ctx):
         await ctx.send(embed=embed)
 
     except Exception as e:
-        print(f"Error in !weather command: {e}")
+        print(f"ERROR: Error in !weather command: {e}")
         embed = discord.Embed(
             title="Error",
             description=f"An unexpected error occurred while processing the `!weather` command: `{e}`",
@@ -1216,15 +1235,20 @@ async def mute_command(ctx, member: discord.Member, duration_minutes: int = 0, *
             await asyncio.sleep(duration_minutes * 60)
             # After duration, check if user is still muted and unmute
             if muted_role in member.roles: # Ensure they weren't manually unmuted already
-                await member.remove_roles(muted_role, reason="Mute duration expired")
-                unmute_embed = discord.Embed(
-                    title="Member Unmuted (Automatic)",
-                    description=f"Unmuted **{member.display_name}** (mute duration expired).",
-                    color=discord.Color.blue(),
-                    timestamp=datetime.now(timezone.UTC)
-                )
-                unmute_embed.set_footer(text="made by summers 2000") # Footer for this embed
-                await ctx.send(embed=unmute_embed)
+                try:
+                    await member.remove_roles(muted_role, reason="Mute duration expired")
+                    unmute_embed = discord.Embed(
+                        title="Member Unmuted (Automatic)",
+                        description=f"Unmuted **{member.display_name}** (mute duration expired).",
+                        color=discord.Color.blue(),
+                        timestamp=datetime.now(timezone.UTC)
+                    )
+                    unmute_embed.set_footer(text="made by summers 2000") # Footer for this embed
+                    await ctx.send(embed=unmute_embed)
+                except discord.Forbidden:
+                    print(f"WARNING: Bot unable to auto-unmute {member.display_name} due to insufficient permissions.")
+                except Exception as ex:
+                    print(f"ERROR: An error occurred during auto-unmute for {member.display_name}: {ex}")
             else:
                 print(f"{member.display_name} was manually unmuted before duration expired.")
 
@@ -1411,7 +1435,7 @@ async def help_command(ctx):
 
     # --- Ban Request Command ---
     ban_request_desc = (
-        f"`!banrequest`: Initiates a ban request process via DM. Costs $10."
+        f"`!banrequest`: Initiates a ban request process via DM. Costs $15."
     )
     embed.add_field(name="__Ban Request Command__", value=ban_request_desc, inline=False)
 
@@ -1470,7 +1494,7 @@ async def seed_stock_dm_toggle(ctx):
     try:
         await ctx.author.send(f"Your GrowAGarden **seed** stock DM notifications are now **{status_message}**.")
     except discord.Forbidden:
-        print(f"Could not DM user {ctx.author.id} for seedstockdm toggle. DMs disabled.")
+        print(f"WARNING: Could not DM user {ctx.author.id} for seedstockdm toggle. DMs disabled.")
 
     if status_message == "enabled":
         await check_achievement(user_id, "FIRST_DM_NOTIFICATION", ctx)
@@ -1509,7 +1533,7 @@ async def gear_stock_dm_toggle(ctx):
     try:
         await ctx.author.send(f"Your GrowAGarden **gear** stock DM notifications are now **{status_message}**.")
     except discord.Forbidden:
-        print(f"Could not DM user {ctx.author.id} for gearstockdm toggle. DMs disabled.")
+        print(f"WARNING: Could not DM user {ctx.author.id} for gearstockdm toggle. DMs disabled.")
 
     if status_message == "enabled":
         await check_achievement(user_id, "FIRST_DM_NOTIFICATION", ctx)
@@ -1536,7 +1560,7 @@ async def notify_item_toggle(ctx, *, item_name: str):
         try:
             await ctx.author.send(f"Your GrowAGarden notification for **{item_name}** is now **disabled**.")
         except discord.Forbidden:
-            print(f"Could not DM user {ctx.author.id} for notifyitem toggle. DMs disabled.")
+            print(f"WARNING: Could not DM user {ctx.author.id} for notifyitem toggle. DMs disabled.")
     else:
         # Enable monitoring for this new item or change from a different item
         notify_items[user_id] = item_name
@@ -1547,20 +1571,20 @@ async def notify_item_toggle(ctx, *, item_name: str):
             try:
                 await ctx.author.send(f"Your GrowAGarden notification is now for **{item_name}** (was: {current_monitored_item}).")
             except discord.Forbidden:
-                print(f"Could not DM user {ctx.author.id} for notifyitem change. DMs disabled.")
+                print(f"WARNING: Could not DM user {ctx.author.id} for notifyitem change. DMs disabled.")
         else:
             await ctx.send(f"Your DM notification for **{item_name}** has been **enabled**.")
             try:
                 await ctx.author.send(f"Your GrowAGarden notification for **{item_name}** is now **enabled**.")
             except discord.Forbidden:
-                print(f"Could not DM user {ctx.author.id} for notifyitem enable. DMs disabled.")
+                print(f"WARNING: Could not DM user {ctx.author.id} for notifyitem enable. DMs disabled.")
         await check_achievement(user_id, "FIRST_DM_NOTIFICATION", ctx) # Could make a specific one for this too
 
     save_notify_items()
 
 # --- Roblox Username Lookup Command ---
 @bot.command(name="rblxusername")
-@commands.check_any(commands.has_permissions(manage_roles=True), commands.has_role(1302076375922118696))
+@commands.check_any(commands.has_permissions(manage_roles=True), commands.has_role(DM_NOTIFY_ROLE_ID)) # Using existing role for access
 @commands.bot_has_permissions(send_messages=True, embed_links=True) # Bot needs to send messages and embeds
 async def rblxusername(ctx, *, username: str):
     """
@@ -1570,7 +1594,6 @@ async def rblxusername(ctx, *, username: str):
     Usage: !rblxusername <Roblox Username>
     """
     # The permission check is now handled by the decorators above.
-    # No need for manual role check here.
 
     await ctx.send(f"Searching for Roblox user '{username}'... please wait.")
 
@@ -1625,7 +1648,6 @@ async def rblxusername(ctx, *, username: str):
         # For this example, we'll use simplified endpoints if available or default to N/A.
         # The profile_data usually contains some basic info.
         
-        # Let's try to fetch these counts if possible
         followers_count = "N/A"
         following_count = "N/A"
         friends_count = "N/A"
@@ -1644,7 +1666,7 @@ async def rblxusername(ctx, *, username: str):
                 friends_count = friends_res['count']
 
         except Exception as e:
-            print(f"Error fetching friend/follower counts for {user_id}: {e}")
+            print(f"WARNING: Error fetching friend/follower counts for {user_id}: {e}")
             # Counts will remain N/A
 
         # Format joined date
@@ -1691,7 +1713,7 @@ async def rblxusername(ctx, *, username: str):
     except aiohttp.ClientError as e:
         await ctx.send(f"A network error occurred while trying to fetch Roblox data: `{e}`. Please try again later.")
     except Exception as e:
-        print(f"Error in !rblxusername command for '{username}': {e}")
+        print(f"ERROR: Error in !rblxusername command for '{username}': {e}")
         await ctx.send(f"An unexpected error occurred while fetching Roblox profile: `{e}`. Please try again later.")
 
 # --- Connect4 Game Implementation ---
@@ -1721,6 +1743,9 @@ class Connect4Game:
         return board_str
 
     def _check_win(self):
+        if self.last_move is None: # No moves made yet
+            return False
+
         directions = [(0, 1), (1, 0), (1, 1), (1, -1)] # Horizontal, Vertical, Diagonal (positive), Diagonal (negative)
         last_row, last_col = self.last_move
         piece = self.board[last_row][last_col]
@@ -1788,7 +1813,10 @@ class Connect4Game:
             embed.add_field(name="Current Turn", value=f"{turn_player.display_name} {self.current_turn_emoji}'s turn!", inline=False)
 
         if self.message:
-            await self.message.edit(embed=embed)
+            try:
+                await self.message.edit(embed=embed)
+            except discord.HTTPException as e:
+                print(f"ERROR: Failed to update Connect4 game message: {e}")
 
 
 @bot.command(name="c4")
@@ -1821,15 +1849,24 @@ async def connect_four(ctx, opponent: discord.Member):
     embed.add_field(name="Current Turn", value=f"{player1.display_name} {C4_RED}'s turn!", inline=False)
     embed.set_footer(text="made by summers 2000")
 
-    game_message = await ctx.send(embed=embed)
-    game.message = game_message
+    try:
+        game_message = await ctx.send(embed=embed)
+        game.message = game_message
 
-    # Add reactions for columns
-    for emoji in C4_NUMBERS:
-        await game_message.add_reaction(emoji)
+        # Add reactions for columns
+        for emoji in C4_NUMBERS:
+            await game_message.add_reaction(emoji)
 
-    await ctx.send(f"Connect4 game started between {player1.mention} and {player2.mention}! "
-                   f"Use the reactions below the board to make your move.")
+        await ctx.send(f"Connect4 game started between {player1.mention} and {player2.mention}! "
+                    f"Use the reactions below the board to make your move.")
+    except discord.Forbidden:
+        await ctx.send("I don't have permission to send messages or add reactions in this channel. Please check my permissions!")
+        del active_c4_games[ctx.channel.id] # Clean up game state
+    except Exception as e:
+        print(f"ERROR: Error starting Connect4 game: {e}")
+        await ctx.send("An unexpected error occurred while starting the Connect4 game.")
+        del active_c4_games[ctx.channel.id] # Clean up game state
+
 
 @bot.event
 async def on_reaction_add(reaction, user):
@@ -1846,13 +1883,15 @@ async def on_reaction_add(reaction, user):
             return # Not the current game message
 
         # Check if it's the correct player's turn
-        expected_player = game.players[game.current_turn_emoji]
-        if user.id != expected_player.id:
+        expected_player = game.players.get(game.current_turn_emoji)
+        if expected_player is None or user.id != expected_player.id: # Defensive check
             # Optionally remove reaction if not their turn
             try:
                 await reaction.remove(user)
             except discord.Forbidden:
-                pass # Bot might not have permission
+                print(f"WARNING: Bot might not have permission to remove reactions in channel {reaction.message.channel.id}.")
+            except Exception as e:
+                print(f"ERROR: Error removing reaction in C4: {e}")
             return
 
         # Check if game is already over
@@ -1860,7 +1899,9 @@ async def on_reaction_add(reaction, user):
             try:
                 await reaction.remove(user)
             except discord.Forbidden:
-                pass
+                print(f"WARNING: Bot might not have permission to remove reactions from finished C4 game in channel {reaction.message.channel.id}.")
+            except Exception as e:
+                print(f"ERROR: Error removing reaction from finished C4 game: {e}")
             return
 
         # Determine the column from reaction
@@ -1875,8 +1916,9 @@ async def on_reaction_add(reaction, user):
                     # This also ensures only valid current moves can be reacted to.
                     await reaction.message.clear_reactions()
                 except discord.Forbidden:
-                    print(f"Bot missing permissions to clear reactions in channel {reaction.message.channel.id}.")
-                    pass # Bot might not have permission
+                    print(f"WARNING: Bot missing permissions to clear reactions in channel {reaction.message.channel.id}.")
+                except Exception as e:
+                    print(f"ERROR: Error clearing reactions in C4: {e}")
 
                 if game._check_win():
                     game.winner = game.current_turn_emoji
@@ -1900,25 +1942,41 @@ async def on_reaction_add(reaction, user):
                     await game.update_game_message()
                     # Re-add reactions for the next turn
                     for emoji in C4_NUMBERS:
-                        await game.message.add_reaction(emoji)
+                        try:
+                            await game.message.add_reaction(emoji)
+                        except discord.Forbidden:
+                            print(f"WARNING: Bot missing permissions to add reactions in channel {reaction.message.channel.id}.")
+                            break # Stop adding if perm error
+                        except Exception as e:
+                            print(f"ERROR: Error adding reactions in C4: {e}")
+                            break
             else:
                 # If drop failed (e.g., column full), remove player's reaction
                 try:
                     await reaction.remove(user)
                 except discord.Forbidden:
-                    pass
+                    print(f"WARNING: Bot might not have permission to remove reactions after failed C4 move in channel {reaction.message.channel.id}.")
+                except Exception as e:
+                    print(f"ERROR: Error removing reaction after failed C4 move: {e}")
                 await reaction.message.channel.send(f"{user.mention}, {error_msg} Please choose another column.", delete_after=5)
         else:
             # If invalid emoji, remove reaction
             try:
                 await reaction.remove(user)
             except discord.Forbidden:
-                pass
+                print(f"WARNING: Bot might not have permission to remove invalid reaction in C4 game in channel {reaction.message.channel.id}.")
+            except Exception as e:
+                print(f"ERROR: Error removing invalid reaction in C4: {e}")
             return
     
     # Handle Tic-Tac-Toe reactions
     elif channel_id in active_tictactoe_games:
         await handle_tictactoe_reaction(reaction, user)
+
+    # Make sure to process other commands after handling reactions
+    # This was a common reason for commands not working alongside reaction events.
+    await bot.process_commands(reaction.message)
+
 
 # --- Tic-Tac-Toe Game Implementation ---
 
@@ -2013,7 +2071,10 @@ class TicTacToeGame:
             embed.add_field(name="Current Turn", value=f"{turn_player.display_name} {self.current_turn_emoji}'s turn!", inline=False)
 
         if self.message:
-            await self.message.edit(embed=embed)
+            try:
+                await self.message.edit(embed=embed)
+            except discord.HTTPException as e:
+                print(f"ERROR: Failed to update Tic-Tac-Toe game message: {e}")
 
 
 @bot.command(name="tictactoe")
@@ -2046,15 +2107,23 @@ async def tictactoe_game(ctx, opponent: discord.Member):
     embed.add_field(name="Current Turn", value=f"{player1.display_name} {TTT_X}'s turn!", inline=False)
     embed.set_footer(text="made by summers 2000")
 
-    game_message = await ctx.send(embed=embed)
-    game.message = game_message
+    try:
+        game_message = await ctx.send(embed=embed)
+        game.message = game_message
 
-    # Add reactions for positions 1-9
-    for emoji in TTT_NUMBERS:
-        await game_message.add_reaction(emoji)
+        # Add reactions for positions 1-9
+        for emoji in TTT_NUMBERS:
+            await game_message.add_reaction(emoji)
 
-    await ctx.send(f"Tic-Tac-Toe game started between {player1.mention} and {player2.mention}! "
-                   f"Use the reactions below the board to make your move.")
+        await ctx.send(f"Tic-Tac-Toe game started between {player1.mention} and {player2.mention}! "
+                    f"Use the reactions below the board to make your move.")
+    except discord.Forbidden:
+        await ctx.send("I don't have permission to send messages or add reactions in this channel. Please check my permissions!")
+        del active_tictactoe_games[ctx.channel.id]
+    except Exception as e:
+        print(f"ERROR: Error starting Tic-Tac-Toe game: {e}")
+        await ctx.send("An unexpected error occurred while starting the Tic-Tac-Toe game.")
+        del active_tictactoe_games[ctx.channel.id]
 
 
 async def handle_tictactoe_reaction(reaction, user):
@@ -2066,12 +2135,14 @@ async def handle_tictactoe_reaction(reaction, user):
             return # Not the current game message
 
         # Check if it's the correct player's turn
-        expected_player = game.players[game.current_turn_emoji]
-        if user.id != expected_player.id:
+        expected_player = game.players.get(game.current_turn_emoji)
+        if expected_player is None or user.id != expected_player.id:
             try:
                 await reaction.remove(user)
             except discord.Forbidden:
-                pass
+                print(f"WARNING: Bot might not have permission to remove reactions in TTT game in channel {reaction.message.channel.id}.")
+            except Exception as e:
+                print(f"ERROR: Error removing reaction in TTT: {e}")
             return
 
         # Check if game is already over
@@ -2079,7 +2150,9 @@ async def handle_tictactoe_reaction(reaction, user):
             try:
                 await reaction.remove(user)
             except discord.Forbidden:
-                pass
+                print(f"WARNING: Bot might not have permission to remove reactions from finished TTT game in channel {reaction.message.channel.id}.")
+            except Exception as e:
+                print(f"ERROR: Error removing reaction from finished TTT game: {e}")
             return
 
         # Determine the position from reaction
@@ -2093,8 +2166,9 @@ async def handle_tictactoe_reaction(reaction, user):
                     # Clear all reactions from the message after a valid move
                     await reaction.message.clear_reactions()
                 except discord.Forbidden:
-                    print(f"Bot missing permissions to clear reactions in channel {reaction.message.channel.id}.")
-                    pass
+                    print(f"WARNING: Bot missing permissions to clear reactions in channel {reaction.message.channel.id}.")
+                except Exception as e:
+                    print(f"ERROR: Error clearing reactions in TTT: {e}")
 
                 if game._check_win():
                     game.winner = game.current_turn_emoji
@@ -2118,20 +2192,30 @@ async def handle_tictactoe_reaction(reaction, user):
                     await game.update_game_message()
                     # Re-add reactions for the next turn
                     for emoji in TTT_NUMBERS:
-                        await game.message.add_reaction(emoji)
+                        try:
+                            await game.message.add_reaction(emoji)
+                        except discord.Forbidden:
+                            print(f"WARNING: Bot missing permissions to add reactions in channel {reaction.message.channel.id}.")
+                            break
+                        except Exception as e:
+                            print(f"ERROR: Error adding reactions in TTT: {e}")
             else:
                 # If move failed (e.g., spot taken), remove player's reaction
                 try:
                     await reaction.remove(user)
                 except discord.Forbidden:
-                    pass
+                    print(f"WARNING: Bot might not have permission to remove reactions after failed TTT move in channel {reaction.message.channel.id}.")
+                except Exception as e:
+                    print(f"ERROR: Error removing reaction after failed TTT move: {e}")
                 await reaction.message.channel.send(f"{user.mention}, {error_msg} Please choose another spot.", delete_after=5)
         else:
             # If invalid emoji, remove reaction
             try:
                 await reaction.remove(user)
             except discord.Forbidden:
-                pass
+                print(f"WARNING: Bot might not have permission to remove invalid reaction in TTT game in channel {reaction.message.channel.id}.")
+            except Exception as e:
+                print(f"ERROR: Error removing invalid reaction in TTT: {e}")
             return
 
 
@@ -2174,16 +2258,20 @@ async def c4_leaderboard(ctx):
     """
     leaderboard_data = []
     # Fetch all members to get display names, if available in cache
-    # If not in cache, bot.get_user(user_id) will return None, need to fetch_user
     for user_id, stats in game_stats.items():
         if stats["c4_wins"] > 0 or stats["c4_losses"] > 0 or stats["c4_draws"] > 0:
             user = bot.get_user(user_id) # Try to get from cache first
             if user:
                 leaderboard_data.append({"user": user, "wins": stats["c4_wins"], "losses": stats["c4_losses"], "draws": stats["c4_draws"]})
             else:
-                # User not in cache, skip for now to avoid blocking on fetch_user for many users
-                # This could be improved by fetching in batches or only when explicitly needed.
-                print(f"User {user_id} not in cache for c4leaderboard. Skipping their entry for this run.")
+                try:
+                    user = await bot.fetch_user(user_id) # Fetch if not in cache
+                    leaderboard_data.append({"user": user, "wins": stats["c4_wins"], "losses": stats["c4_losses"], "draws": stats["c4_draws"]})
+                except discord.NotFound:
+                    print(f"WARNING: User {user_id} not found for c4leaderboard. Skipping their entry.")
+                except Exception as e:
+                    print(f"ERROR: Error fetching user {user_id} for c4leaderboard: {e}. Skipping entry.")
+
 
     if not leaderboard_data:
         await ctx.send("No Connect4 games recorded yet for the leaderboard.")
@@ -2221,7 +2309,13 @@ async def ttt_leaderboard(ctx):
             if user:
                 leaderboard_data.append({"user": user, "wins": stats["ttt_wins"], "losses": stats["ttt_losses"], "draws": stats["ttt_draws"]})
             else:
-                print(f"User {user_id} not in cache for tttleaderboard. Skipping their entry for this run.")
+                try:
+                    user = await bot.fetch_user(user_id) # Fetch if not in cache
+                    leaderboard_data.append({"user": user, "wins": stats["ttt_wins"], "losses": stats["ttt_losses"], "draws": stats["ttt_draws"]})
+                except discord.NotFound:
+                    print(f"WARNING: User {user_id} not found for tttleaderboard. Skipping their entry.")
+                except Exception as e:
+                    print(f"ERROR: Error fetching user {user_id} for tttleaderboard: {e}. Skipping entry.")
     
     if not leaderboard_data:
         await ctx.send("No Tic-Tac-Toe games recorded yet for the leaderboard.")
@@ -2343,9 +2437,16 @@ async def lotto_status(ctx):
         # Sort participants by number of tickets descending
         sorted_participants = sorted(LOTTO_TICKETS.items(), key=lambda item: item[1], reverse=True)
         for user_id, tickets in sorted_participants:
-            user = bot.get_user(user_id) or await bot.fetch_user(user_id)
-            user_name = user.display_name if user else f"Unknown User (ID: {user_id})"
-            participants_list.append(f"{user_name}: `{tickets}` tickets")
+            try: # Defensive fetch for user
+                user = bot.get_user(user_id) or await bot.fetch_user(user_id)
+                user_name = user.display_name if user else f"Unknown User (ID: {user_id})"
+                participants_list.append(f"{user_name}: `{tickets}` tickets")
+            except discord.NotFound:
+                print(f"WARNING: User {user_id} not found for lottery status.")
+                participants_list.append(f"Unknown User (ID: {user_id}): `{tickets}` tickets")
+            except Exception as e:
+                print(f"ERROR: Error fetching user {user_id} for lottery status: {e}")
+                participants_list.append(f"Unknown User (ID: {user_id}): `{tickets}` tickets")
         
         embed.add_field(name="Participants (Tickets)", value="\n".join(participants_list), inline=False)
     
@@ -2375,7 +2476,16 @@ async def lotto_draw(ctx):
         all_tickets.extend([user_id] * tickets) # Add user_id 'tickets' times
 
     winner_id = random.choice(all_tickets)
-    winner_user = bot.get_user(winner_id) or await bot.fetch_user(winner_id)
+    
+    winner_user = bot.get_user(winner_id)
+    if winner_user is None:
+        try:
+            winner_user = await bot.fetch_user(winner_id)
+        except discord.NotFound:
+            print(f"WARNING: Lottery winner user {winner_id} not found.")
+        except Exception as e:
+            print(f"ERROR: Error fetching lottery winner user {winner_id}: {e}")
+
     winner_name = winner_user.mention if winner_user else f"Unknown User (ID: {winner_id})"
 
     winnings = LOTTO_POT
@@ -2640,9 +2750,9 @@ async def show_random_garden(ctx):
                     user = await bot.fetch_user(user_id)
                     valid_gardens.append({"user": user, "data": garden_data})
                 except discord.NotFound:
-                    print(f"User {user_id} not found when trying to fetch for !showgardens. Skipping.")
+                    print(f"WARNING: User {user_id} not found when trying to fetch for !showgardens. Skipping.")
                 except Exception as e:
-                    print(f"Error fetching user {user_id} for !showgardens: {e}. Skipping.")
+                    print(f"ERROR: Error fetching user {user_id} for !showgardens: {e}. Skipping.")
     
     if not valid_gardens:
         await ctx.send("Could not find any valid gardens to showcase at this time. Please ensure users have set descriptions for their gardens.")
@@ -2668,24 +2778,26 @@ async def show_random_garden(ctx):
         print(f"Manually posted {user.display_name}'s garden to showcase channel via !showgardens.")
     except discord.Forbidden:
         await ctx.send("I don't have permission to send messages in this channel for garden showcases.")
+        print(f"WARNING: Bot forbidden from sending garden showcase in channel {ctx.channel.id}.")
     except Exception as e:
         await ctx.send(f"An unexpected error occurred while posting garden showcase: `{e}`")
+        print(f"ERROR: Error posting garden showcase: {e}")
 
 
 @tasks.loop(hours=6) # Posts a random garden every 6 hours
 async def garden_showcase_poster():
     """Background task to periodically post a random user's garden."""
     if not GARDEN_SHOWCASE_CHANNEL_ID:
-        print("Garden Showcase channel ID not set. Skipping garden showcase poster.")
+        print("WARNING: Garden Showcase channel ID not set. Skipping garden showcase poster.")
         return
     
     channel = bot.get_channel(GARDEN_SHOWCASE_CHANNEL_ID)
     if not channel:
-        print(f"Garden Showcase channel with ID {GARDEN_SHOWCASE_CHANNEL_ID} not found or inaccessible.")
+        print(f"WARNING: Garden Showcase channel with ID {GARDEN_SHOWCASE_CHANNEL_ID} not found or inaccessible. Skipping.")
         return
 
     if not my_gardens:
-        print("No gardens saved for showcasing.")
+        print("INFO: No gardens saved for showcasing.")
         return
 
     # Filter out gardens without descriptions or where the user might not exist anymore
@@ -2696,9 +2808,18 @@ async def garden_showcase_poster():
             user = bot.get_user(user_id)
             if user: # Ensure the user still exists in the bot's cache
                 valid_gardens.append({"user": user, "data": garden_data})
+            else:
+                try: # Attempt to fetch user if not in cache, for a more reliable showcase
+                    user = await bot.fetch_user(user_id)
+                    valid_gardens.append({"user": user, "data": garden_data})
+                except discord.NotFound:
+                    print(f"WARNING: User {user_id} not found for periodic garden showcase. Skipping.")
+                except Exception as e:
+                    print(f"ERROR: Error fetching user {user_id} for periodic garden showcase: {e}. Skipping.")
+
 
     if not valid_gardens:
-        print("No valid gardens to showcase.")
+        print("INFO: No valid gardens to showcase for periodic poster.")
         return
 
     import random
@@ -2720,13 +2841,15 @@ async def garden_showcase_poster():
         await channel.send(embed=embed)
         print(f"Posted {user.display_name}'s garden to showcase channel.")
     except discord.Forbidden:
-        print(f"Bot does not have permission to send messages in garden showcase channel {channel.id}.")
+        print(f"WARNING: Bot does not have permission to send messages in garden showcase channel {channel.id}. Please check bot permissions.")
     except Exception as e:
-        print(f"Error posting garden showcase: {e}")
+        print(f"ERROR: Error posting garden showcase: {e}")
 
 @garden_showcase_poster.before_loop
 async def before_garden_showcase_poster():
+    print("Waiting for bot to be ready before starting garden showcase poster...")
     await bot.wait_until_ready()
+    print("Bot is ready, garden showcase poster proceeding.")
 
 # --- Remind Me Command ---
 @bot.command(name="remindme")
@@ -2826,10 +2949,10 @@ async def reminder_checker():
             try:
                 user = await bot.fetch_user(reminder['user_id'])
             except discord.NotFound:
-                print(f"Reminder: User {reminder['user_id']} not found. Skipping reminder.")
+                print(f"WARNING: Reminder: User {reminder['user_id']} not found. Skipping reminder.")
                 continue
             except Exception as e:
-                print(f"Reminder: Error fetching user {reminder['user_id']}: {e}. Skipping reminder.")
+                print(f"ERROR: Reminder: Error fetching user {reminder['user_id']}: {e}. Skipping reminder.")
                 continue
 
         if user:
@@ -2844,13 +2967,15 @@ async def reminder_checker():
                 await user.send(embed=embed)
                 print(f"Sent reminder to {user.name} ({user.id}): {reminder['message']}")
             except discord.Forbidden:
-                print(f"Could not send reminder DM to {user.name} ({user.id}). DMs disabled.")
+                print(f"WARNING: Could not send reminder DM to {user.name} ({user.id}). DMs disabled.")
             except Exception as e:
-                print(f"An unexpected error occurred while sending reminder DM to {user.name} ({user.id}): {e}")
+                print(f"ERROR: An unexpected error occurred while sending reminder DM to {user.name} ({user.id}): {e}")
 
 @reminder_checker.before_loop
 async def before_reminder_checker():
+    print("Waiting for bot to be ready before starting reminder checker...")
     await bot.wait_until_ready()
+    print("Bot is ready, reminder checker proceeding.")
 
 
 # --- Ban Request View ---
@@ -2873,7 +2998,11 @@ class ConfirmBanRequestView(discord.ui.View):
         # Update the original message to disable buttons
         for item in self.children:
             item.disabled = True
-        await interaction.message.edit(view=self)
+        try:
+            await interaction.message.edit(view=self)
+        except discord.HTTPException as e:
+            print(f"WARNING: Failed to edit interaction message after ban request confirmation: {e}")
+
 
         embed = discord.Embed(
             title="Ban Request: Payment Required",
@@ -2901,7 +3030,10 @@ class ConfirmBanRequestView(discord.ui.View):
         # Update the original message to disable buttons
         for item in self.children:
             item.disabled = True
-        await interaction.message.edit(view=self)
+        try:
+            await interaction.message.edit(view=self)
+        except discord.HTTPException as e:
+            print(f"WARNING: Failed to edit interaction message after ban request cancellation: {e}")
         
         embed = discord.Embed(
             title="Ban Request Canceled",
@@ -2919,15 +3051,7 @@ class ConfirmBanRequestView(discord.ui.View):
                 for item in self.children:
                     item.disabled = True
                 await self.message.edit(content="Ban request confirmation timed out.", view=self)
-                embed = discord.Embed(
-                    title="Ban Request Timed Out",
-                    description="Your ban request confirmation timed out. Please try again if you wish to proceed.",
-                    color=discord.Color.red(),
-                    timestamp=datetime.now(timezone.UTC)
-                )
-                embed.set_footer(text="made by summers 2000")
-                # Removed sending ephemeral message here as it might conflict with original DM channel.
-                # await self.message.channel.send(embed=embed) # This was trying to send in DM, but message.channel is the DM channel
+                # No need to send an extra DM here, as the view message is already in DM.
             except discord.HTTPException:
                 pass # Message might have been deleted or inaccessible
             finally:
@@ -2940,7 +3064,7 @@ class ConfirmBanRequestView(discord.ui.View):
 @commands.guild_only()
 async def ban_request(ctx):
     """
-    Initiates a ban request process via DM. Costs $10.
+    Initiates a ban request process via DM. Costs $15.
     Usage: !banrequest
     """
     if ctx.author.id in BAN_REQUEST_STATES:
@@ -2968,7 +3092,7 @@ async def ban_request(ctx):
         if ctx.author.id in BAN_REQUEST_STATES:
             del BAN_REQUEST_STATES[ctx.author.id]
     except Exception as e:
-        print(f"Error sending initial ban request DM: {e}")
+        print(f"ERROR: Error sending initial ban request DM: {e}")
         await ctx.send("An unexpected error occurred while starting your ban request. Please try again later.", ephemeral=True)
         if ctx.author.id in BAN_REQUEST_STATES:
             del BAN_REQUEST_STATES[ctx.author.id]
@@ -3022,7 +3146,13 @@ async def on_message(message):
                     timestamp=datetime.now(timezone.UTC)
                 )
                 log_embed.set_footer(text="made by summers 2000")
-                await log_channel.send(embed=log_embed)
+                try:
+                    await log_channel.send(embed=log_embed)
+                except discord.Forbidden:
+                    print(f"WARNING: Bot forbidden from sending ban request log to channel {BAN_REQUEST_LOG_CHANNEL_ID}.")
+                except Exception as e:
+                    print(f"ERROR: Error sending ban request log (user not found): {e}")
+
                 await message.channel.send(f"The User ID `{target_user_id}` was not found in the server. Please ensure you provided a valid User ID from the server where you wish to ban them. The request has been logged.")
                 del BAN_REQUEST_STATES[message.author.id]
                 return
@@ -3037,12 +3167,18 @@ async def on_message(message):
                     timestamp=datetime.now(timezone.UTC)
                 )
                 log_embed.set_footer(text="made by summers 2000")
-                await log_channel.send(embed=log_embed)
+                try:
+                    await log_channel.send(embed=log_embed)
+                except discord.Forbidden:
+                    print(f"WARNING: Bot forbidden from sending ban request log to channel {BAN_REQUEST_LOG_CHANNEL_ID}.")
+                except Exception as e:
+                    print(f"ERROR: Error sending ban request log (bot forbidden): {e}")
+
                 await message.channel.send("I do not have the necessary permissions to fetch user details in the server. Please contact a bot administrator. The request has been logged.")
                 del BAN_REQUEST_STATES[message.author.id]
                 return
             except Exception as e:
-                print(f"Error fetching member for ban request: {e}")
+                print(f"ERROR: Error fetching member for ban request: {e}")
                 log_embed = discord.Embed(
                     title="🚨 Ban Request Log 🚨",
                     description=f"**Requester:** {requester.mention} (`{requester.id}`)\n"
@@ -3052,7 +3188,13 @@ async def on_message(message):
                     timestamp=datetime.now(timezone.UTC)
                 )
                 log_embed.set_footer(text="made by summers 2000")
-                await log_channel.send(embed=log_embed)
+                try:
+                    await log_channel.send(embed=log_embed)
+                except discord.Forbidden:
+                    print(f"WARNING: Bot forbidden from sending ban request log to channel {BAN_REQUEST_LOG_CHANNEL_ID}.")
+                except Exception as e:
+                    print(f"ERROR: Error sending ban request log (unexpected): {e}")
+
                 await message.channel.send(f"An unexpected error occurred while processing the User ID. The request has been logged.")
                 del BAN_REQUEST_STATES[message.author.id]
                 return
@@ -3060,7 +3202,7 @@ async def on_message(message):
             # Check if target user has the boosting role
             if discord.utils.get(target_member.roles, id=BOOSTING_ROLE_ID):
                 log_embed = discord.Embed(
-                    title="🚨 Ban Request Log �",
+                    title="🚨 Ban Request Log 🚨",
                     description=f"**Requester:** {requester.mention} (`{requester.id}`)\n"
                                 f"**Target User:** {target_member.mention} (`{target_member.id}`)\n"
                                 f"**Status:** This person cannot be banned because they are boosting.",
@@ -3068,7 +3210,13 @@ async def on_message(message):
                     timestamp=datetime.now(timezone.UTC)
                 )
                 log_embed.set_footer(text="made by summers 2000")
-                await log_channel.send(embed=log_embed)
+                try:
+                    await log_channel.send(embed=log_embed)
+                except discord.Forbidden:
+                    print(f"WARNING: Bot forbidden from sending ban request log to channel {BAN_REQUEST_LOG_CHANNEL_ID}.")
+                except Exception as e:
+                    print(f"ERROR: Error sending ban request log (boosting role): {e}")
+
                 await message.channel.send(f"The user {target_member.mention} cannot be banned because they are currently boosting the server. The request has been logged.")
             else:
                 log_embed = discord.Embed(
@@ -3080,7 +3228,13 @@ async def on_message(message):
                     timestamp=datetime.now(timezone.UTC)
                 )
                 log_embed.set_footer(text="made by summers 2000")
-                await log_channel.send(embed=log_embed)
+                try:
+                    await log_channel.send(embed=log_embed)
+                except discord.Forbidden:
+                    print(f"WARNING: Bot forbidden from sending ban request log to channel {BAN_REQUEST_LOG_CHANNEL_ID}.")
+                except Exception as e:
+                    print(f"ERROR: Error sending ban request log (success): {e}")
+
                 await message.channel.send(f"Thank you! Your ban request for {target_member.mention} has been received and logged. A moderator will review this shortly.")
 
             # Remove user from state after processing
@@ -3590,7 +3744,15 @@ async def richest_command(ctx):
 
     description = ""
     for i, (user_id, balance) in enumerate(sorted_balances[:10]): # Top 10
-        user = bot.get_user(user_id) or await bot.fetch_user(user_id) # Fetch user if not in cache
+        user = bot.get_user(user_id)
+        if user is None:
+            try:
+                user = await bot.fetch_user(user_id) # Fetch user if not in cache
+            except discord.NotFound:
+                print(f"WARNING: User {user_id} not found for richest command.")
+            except Exception as e:
+                print(f"ERROR: Error fetching user {user_id} for richest command: {e}")
+        
         user_name = user.display_name if user else f"Unknown User (ID: {user_id})"
         description += f"**{i+1}. {user_name}** - `{balance}` coins\n"
     
@@ -3666,3 +3828,7 @@ except discord.HTTPException as e:
     print("This often indicates a problem with Discord's API or your network connection.")
 except Exception as e:
     print(f"\n!!! AN UNEXPECTED ERROR OCCURRED DURING BOT STARTUP: {e} !!!")
+    import traceback
+    traceback.print_exc() # Print full traceback for debugging
+    exit(1) # Exit with error code
+    
