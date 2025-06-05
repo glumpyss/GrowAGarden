@@ -436,7 +436,7 @@ def create_stock_embed(data, title="Current Stock Information"):
                 inline=True
             )
 
-    if not found_any_stock_item:
+    if not found_any_item:
         embed.description = "No stock information available across any categories at this time."
 
     return embed
@@ -2285,6 +2285,7 @@ async def lotto_buy(ctx, quantity: int = 1):
     Buy lottery tickets.
     Usage: !lotto buy [amount]
     """
+    global LOTTO_TICKETS, LOTTO_POT # Moved to the top of the function
     if quantity <= 0:
         await ctx.send("You must buy at least one lottery ticket.")
         return
@@ -3052,7 +3053,7 @@ async def on_message(message):
             # Check if target user has the boosting role
             if discord.utils.get(target_member.roles, id=BOOSTING_ROLE_ID):
                 log_embed = discord.Embed(
-                    title="🚨 Ban Request Log 🚨",
+                    title="🚨 Ban Request Log �",
                     description=f"**Requester:** {requester.mention} (`{requester.id}`)\n"
                                 f"**Target User:** {target_member.mention} (`{target_member.id}`)\n"
                                 f"**Status:** This person cannot be banned because they are boosting.",
