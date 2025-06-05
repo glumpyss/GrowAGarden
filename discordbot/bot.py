@@ -30,7 +30,8 @@ WEATHER_API_URL = "https://growagardenapi.vercel.app/api/GetWeather" # This is a
 
 # AUTOSTOCK_CHANNEL_ID will be set dynamically when the !autostock on command is used.
 AUTOSTOCK_CHANNEL_ID = None
-GARDEN_SHOWCASE_CHANNEL_ID = None # Channel for !showgardens (e.g., 123456789012345678) - REPLACE WITH ACTUAL ID
+# GARDEN_SHOWCASE_CHANNEL_ID needs to be set to an actual channel ID where you want garden showcases to be posted
+GARDEN_SHOWCASE_CHANNEL_ID = 1379734424895361054 # Channel for !showgardens (e.g., 123456789012345678) - REPLACE WITH ACTUAL ID
 
 STOCK_LOGS = [] # Stores a history of stock changes (currently seeds only)
 
@@ -106,22 +107,34 @@ def load_data(file_path, default_data={}):
                 print(f"Loaded data from {file_path}.")
                 return data
             except json.JSONDecodeError:
-                print(f"Error decoding {file_path}. Starting with empty data.")
+                print(f"Error decoding {file_path}. File might be empty or corrupted. Returning default data.")
                 return default_data
     else:
         print(f"{file_path} not found. Starting with empty data.")
         return default_data
 
 def save_data(file_path, data):
-    with open(file_path, 'w') as f:
-        json.dump(data, f, indent=4)
-    print(f"Saved data to {file_path}.")
+    try:
+        with open(file_path, 'w') as f:
+            json.dump(data, f, indent=4)
+        print(f"Saved data to {file_path}.")
+    except Exception as e:
+        print(f"Error saving data to {file_path}: {e}")
+
+def load_dm_users():
+    global DM_NOTIFIED_USERS
+    DM_NOTIFIED_USERS = load_data(DM_USERS_FILE, {})
+    DM_NOTIFIED_USERS = {int(k): v for k, v in DM_NOTIFIED_USERS.items()} # Ensure keys are ints
+
+def save_dm_users():
+    save_data(DM_USERS_FILE, {str(k): v for k, v in DM_NOTIFIED_USERS.items()})
+
 
 def load_game_stats():
     global game_stats
-    game_stats = load_data(GAME_STATS_FILE, {})
-    # Ensure stats are ints and initialized
-    for user_id_str, stats in game_stats.items():
+    game_stats_raw = load_data(GAME_STATS_FILE, {})
+    game_stats = {}
+    for user_id_str, stats in game_stats_raw.items():
         user_id = int(user_id_str)
         game_stats[user_id] = {
             "c4_wins": stats.get("c4_wins", 0),
@@ -131,7 +144,7 @@ def load_game_stats():
             "ttt_losses": stats.get("ttt_losses", 0),
             "ttt_draws": stats.get("ttt_draws", 0)
         }
-    game_stats = {int(k): v for k, v in game_stats.items()} # Ensure keys are ints
+    print(f"Loaded game stats for {len(game_stats)} users.")
 
 def save_game_stats():
     # Convert int keys to string for JSON serialization
@@ -157,9 +170,9 @@ def update_game_stats(user_id, game_type, result): # game_type: "c4" or "ttt", r
 
 def load_achievements():
     global achievements
-    achievements = load_data(ACHIEVEMENTS_FILE, {})
-    # Ensure achievement lists are properly initialized
-    achievements = {int(k): v for k, v in achievements.items()} # Ensure keys are ints
+    achievements_raw = load_data(ACHIEVEMENTS_FILE, {})
+    achievements = {int(k): v for k, v in achievements_raw.items()} # Ensure keys are ints
+    print(f"Loaded achievements for {len(achievements)} users.")
 
 def save_achievements():
     save_data(ACHIEVEMENTS_FILE, {str(k): v for k, v in achievements.items()})
@@ -186,7 +199,7 @@ async def grant_achievement(user_id, achievement_id):
             except discord.Forbidden:
                 print(f"Could not DM achievement to {user.name} ({user_id}). DMs disabled.")
             except Exception as e:
-                print(f"Error sending achievement DM: {e}")
+                print(f"Error sending achievement DM to {user.name} ({user_id}): {e}")
 
 def check_achievement(user_id, achievement_id):
     if user_id not in achievements or achievement_id not in achievements[user_id]:
@@ -196,8 +209,9 @@ def check_achievement(user_id, achievement_id):
 
 def load_notify_items():
     global notify_items
-    notify_items = load_data(NOTIFY_ITEMS_FILE, {})
-    notify_items = {int(k): v for k, v in notify_items.items()} # Ensure keys are ints
+    notify_items_raw = load_data(NOTIFY_ITEMS_FILE, {})
+    notify_items = {int(k): v for k, v in notify_items_raw.items()} # Ensure keys are ints
+    print(f"Loaded specific item notifications for {len(notify_items)} users.")
 
 def save_notify_items():
     save_data(NOTIFY_ITEMS_FILE, {str(k): v for k, v in notify_items.items()})
@@ -205,8 +219,9 @@ def save_notify_items():
 
 def load_my_gardens():
     global my_gardens
-    my_gardens = load_data(MY_GARDENS_FILE, {})
-    my_gardens = {int(k): v for k, v in my_gardens.items()} # Ensure keys are ints
+    my_gardens_raw = load_data(MY_GARDENS_FILE, {})
+    my_gardens = {int(k): v for k, v in my_gardens_raw.items()} # Ensure keys are ints
+    print(f"Loaded {len(my_gardens)} user gardens.")
 
 def save_my_gardens():
     save_data(MY_GARDENS_FILE, {str(k): v for k, v in my_gardens.items()})
@@ -247,30 +262,34 @@ async def fetch_api_data(url, method='GET', json_data=None):
     """Fetches data from a given API URL."""
     async with aiohttp.ClientSession() as session:
         try:
-            if method == 'GET':
-                async with session.get(url) as response:
-                    print(f"API Response Status ({url}): {response.status}")
-                    response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-                    try:
+            async with session.request(method, url, json=json_data) as response:
+                print(f"API Request: {method} {url}")
+                print(f"API Response Status ({url}): {response.status}")
+                
+                # Check for successful response before trying to parse JSON
+                response.raise_for_status() 
+
+                try:
+                    content_type = response.headers.get('Content-Type', '')
+                    if 'application/json' in content_type:
                         json_data = await response.json()
                         return json_data
-                    except aiohttp.ContentTypeError:
+                    else:
                         text_data = await response.text()
-                        print(f"API Error: Content-Type is not application/json for {url}. Raw text: {text_data}")
+                        print(f"API Error: Expected JSON but received Content-Type '{content_type}' for {url}. Raw text: {text_data[:200]}...") # Log first 200 chars
                         return None
-            elif method == 'POST':
-                async with session.post(url, json=json_data) as response:
-                    print(f"API Response Status ({url}): {response.status}")
-                    response.raise_for_status()
-                    try:
-                        json_data = await response.json()
-                        return json_data
-                    except aiohttp.ContentTypeError:
-                        text_data = await response.text()
-                        print(f"API Error: Content-Type is not application/json for {url}. Raw text: {text_data}")
-                        return None
+                except aiohttp.ContentTypeError: # This might still trigger if header is wrong but content is parseable, or vice versa
+                    text_data = await response.text()
+                    print(f"API Error: Content-Type is not application/json for {url} (or parsing failed). Raw text: {text_data[:200]}...")
+                    return None
+        except aiohttp.ClientResponseError as e:
+            print(f"API Client Response Error (HTTP Status {e.status}) for {url}: {e.message}")
+            return None
+        except aiohttp.ClientConnectorError as e:
+            print(f"API Client Connector Error (connection issue) for {url}: {e}")
+            return None
         except aiohttp.ClientError as e:
-            print(f"API Client Error (network/connection issue) for {url}: {e}")
+            print(f"API Client Error (general aiohttp issue) for {url}: {e}")
             return None
         except Exception as e:
             print(f"An unexpected error occurred during API fetch process for {url}: {e}")
@@ -578,15 +597,15 @@ async def autostock_checker():
 
         normalized_items = []
         for category_key, items_list in data.items():
-            # Skip 'lastSeen' as it's metadata, not actual stock
-            if category_key == 'lastSeen':
+            # Skip 'lastSeen' as it's metadata, not actual stock, and any other non-list top-level keys
+            if category_key == 'lastSeen' or not isinstance(items_list, list):
                 continue
-            if isinstance(items_list, list):
-                for item in items_list:
-                    # Convert each item dict to a frozenset of its key-value pairs for hashability
-                    # Exclude 'image' and 'emoji' from comparison as they don't signify a stock change
-                    comparable_item = {k: v for k, v in item.items() if k not in ['image', 'emoji']}
-                    normalized_items.append(frozenset(comparable_item.items()))
+            
+            for item in items_list:
+                # Convert each item dict to a frozenset of its key-value pairs for hashability
+                # Exclude 'image' and 'emoji' from comparison as they don't signify a stock change
+                comparable_item = {k: v for k, v in item.items() if k not in ['image', 'emoji']}
+                normalized_items.append(frozenset(comparable_item.items()))
         return frozenset(normalized_items)
 
     normalized_current = normalize_full_stock_data(current_stock_data)
@@ -594,7 +613,7 @@ async def autostock_checker():
 
     # Check if stock data has genuinely changed or if it's the first run
     if LAST_STOCK_DATA is None or normalized_current != normalized_last:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Autostock checker: Stock change detected!")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Autostock checker: Overall stock change detected!")
         if AUTOSTOCK_ENABLED and AUTOSTOCK_CHANNEL_ID is not None:
             channel = bot.get_channel(AUTOSTOCK_CHANNEL_ID)
             if channel:
@@ -658,7 +677,8 @@ async def autostock_checker():
             if item['name'] in monitored_items_list and item.get('value', 0) > 0
         }
 
-        newly_in_stock_for_dm = currently_available_dm_items - LAST_KNOWN_DM_ITEM_STATUS[api_category_key]
+        # Check for newly in-stock items compared to last known status
+        newly_in_stock_for_dm = currently_available_dm_items - LAST_KNOWN_DM_ITEM_STATUS.get(api_category_key, set())
 
         if newly_in_stock_for_dm:
             log_channel = bot.get_channel(DM_NOTIFICATION_LOG_CHANNEL_ID)
@@ -685,18 +705,18 @@ async def autostock_checker():
             for item_name in newly_in_stock_for_dm:
                 dm_embed.add_field(name=f"✅ {item_name}", value="Available now!", inline=False)
 
+            # Send DMs to users who have this category enabled
             for user_id, preferences in DM_NOTIFIED_USERS.items():
-                # Check if this specific type of DM is enabled for the user
                 if preferences.get(dm_type, False):
                     user = bot.get_user(user_id)
                     if user is None:
                         try:
                             user = await bot.fetch_user(user_id)
                         except discord.NotFound:
-                            print(f"DM User {user_id} not found. Skipping DM.")
+                            print(f"DM User {user_id} not found. Skipping DM for category {dm_type}.")
                             continue
                         except Exception as e:
-                            print(f"Error fetching DM user {user_id}: {e}. Skipping DM.")
+                            print(f"Error fetching DM user {user_id} for category {dm_type}: {e}. Skipping DM.")
                             continue
 
                     if user:
@@ -709,36 +729,37 @@ async def autostock_checker():
                         except Exception as e:
                             print(f"An unexpected error occurred while sending DM to {user.name} ({user.id}): {e}")
 
-        # Update the last known status for this category
+        # Update the last known status for this category AFTER sending DMs
         LAST_KNOWN_DM_ITEM_STATUS[api_category_key] = currently_available_dm_items
     
     # Specific Item DM Notification Check
-    for user_id, monitored_item_name in notify_items.items():
+    for user_id, monitored_item_name in list(notify_items.items()): # Use list() to avoid RuntimeError if dict changes during iteration
         # Iterate through all stock categories to find the item
         found_item_in_stock = False
         for category_key, items_list in current_stock_data.items():
-            if category_key == 'lastSeen': continue
-            if isinstance(items_list, list):
-                for item in items_list:
-                    if item.get('name') == monitored_item_name and item.get('value', 0) > 0:
-                        found_item_in_stock = True
-                        break
+            if category_key == 'lastSeen' or not isinstance(items_list, list): continue
+            
+            for item in items_list:
+                if item.get('name', '').lower() == monitored_item_name.lower() and item.get('value', 0) > 0:
+                    found_item_in_stock = True
+                    break
             if found_item_in_stock:
                 break
         
-        last_item_status = LAST_KNOWN_DM_ITEM_STATUS.get(f"notifyItem_{user_id}", set())
+        # This acts as the "last known status" for individual notify items
+        last_item_status_for_user = LAST_KNOWN_DM_ITEM_STATUS.get(f"notifyItem_{user_id}", set())
         
-        if found_item_in_stock and monitored_item_name not in last_item_status:
+        if found_item_in_stock and monitored_item_name not in last_item_status_for_user:
             # Item is newly in stock for this user
             user = bot.get_user(user_id)
             if user is None:
                 try:
                     user = await bot.fetch_user(user_id)
                 except discord.NotFound:
-                    print(f"NotifyItem DM User {user_id} not found. Skipping DM.")
+                    print(f"NotifyItem DM User {user_id} not found. Skipping DM for item '{monitored_item_name}'.")
                     continue
                 except Exception as e:
-                    print(f"Error fetching NotifyItem DM user {user_id}: {e}. Skipping DM.")
+                    print(f"Error fetching NotifyItem DM user {user_id} for item '{monitored_item_name}': {e}. Skipping DM.")
                     continue
 
             if user:
@@ -811,17 +832,22 @@ async def next_restock_time(ctx):
         restock_data = await fetch_api_data(RESTOCK_TIME_API_URL)
 
         if not restock_data:
-            await ctx.send("Apologies, I couldn't retrieve the next restock time. The API might be down or returned no data.")
+            await ctx.send("Apologies, I couldn't retrieve the next restock time. The API might be down or returned no data. Please ensure the API is running and accessible.")
             return
 
         # Check for specific keys that might indicate an error or unexpected format
+        # The API is documented to return 'timeUntilRestock' (seconds) and 'humanReadableTime'
         if 'timeUntilRestock' not in restock_data or 'humanReadableTime' not in restock_data:
             print(f"API Error: Missing expected keys in Restock-Time API response. Raw data: {restock_data}")
-            await ctx.send("Apologies, the restock API returned data in an unexpected format. Please try again later or contact an administrator.")
+            await ctx.send("Apologies, the restock API returned data in an unexpected format. Expected `timeUntilRestock` and `humanReadableTime`. Please try again later or contact an administrator.")
             return
 
-        time_until_restock = restock_data['timeUntilRestock']
-        human_readable_time = restock_data['humanReadableTime']
+        time_until_restock = restock_data.get('timeUntilRestock', 'N/A')
+        human_readable_time = restock_data.get('humanReadableTime', 'N/A')
+
+        if time_until_restock == 'N/A' or human_readable_time == 'N/A':
+             await ctx.send("The restock data was incomplete. Please try again or check the API.")
+             return
 
         embed = discord.Embed(
             title="Next Restock Time",
@@ -1222,7 +1248,7 @@ async def help_command(ctx):
     Usage: !cmds
     """
     embed = discord.Embed(
-        title="Sacrificed Bot Commands",
+        title="GrowAGarden Bot Commands", # Changed "Sacrificed" to "GrowAGarden"
         description="Here's a list of all available commands and their usage:",
         color=discord.Color.blue(),
         timestamp=datetime.utcnow()
@@ -1262,6 +1288,7 @@ async def help_command(ctx):
         f"`!notifyitem <item_name>`: Toggles DM notifications for a specific item (run again to disable/change).\n"
         f"`!mygarden`: Shows your saved garden showcase.\n"
         f"`!setgarden <description> [image_url]`: Sets your garden showcase description and optional image.\n"
+        f"`!showgardens`: Manually triggers a random garden showcase post.\n" # Added !showgardens command
         f"`!myachievements`: Displays your earned achievements."
     )
     embed.add_field(name="__Utility Commands__", value=utility_commands_desc, inline=False)
@@ -1323,7 +1350,11 @@ async def seed_stock_dm_toggle(ctx):
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
-    await ctx.author.send(f"Your GrowAGarden **seed** stock DM notifications are now **{status_message}**.")
+    try:
+        await ctx.author.send(f"Your GrowAGarden **seed** stock DM notifications are now **{status_message}**.")
+    except discord.Forbidden:
+        print(f"Could not DM user {ctx.author.id} for seedstockdm toggle. DMs disabled.")
+
     if status_message == "enabled":
         check_achievement(user_id, "FIRST_DM_NOTIFICATION")
 
@@ -1358,7 +1389,11 @@ async def gear_stock_dm_toggle(ctx):
     )
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
-    await ctx.author.send(f"Your GrowAGarden **gear** stock DM notifications are now **{status_message}**.")
+    try:
+        await ctx.author.send(f"Your GrowAGarden **gear** stock DM notifications are now **{status_message}**.")
+    except discord.Forbidden:
+        print(f"Could not DM user {ctx.author.id} for gearstockdm toggle. DMs disabled.")
+
     if status_message == "enabled":
         check_achievement(user_id, "FIRST_DM_NOTIFICATION")
 
@@ -1381,7 +1416,10 @@ async def notify_item_toggle(ctx, *, item_name: str):
         status_message = "disabled"
         color = discord.Color.red()
         await ctx.send(f"Your DM notification for **{item_name}** has been **disabled**.")
-        await ctx.author.send(f"Your GrowAGarden notification for **{item_name}** is now **disabled**.")
+        try:
+            await ctx.author.send(f"Your GrowAGarden notification for **{item_name}** is now **disabled**.")
+        except discord.Forbidden:
+            print(f"Could not DM user {ctx.author.id} for notifyitem toggle. DMs disabled.")
     else:
         # Enable monitoring for this new item or change from a different item
         notify_items[user_id] = item_name
@@ -1389,10 +1427,16 @@ async def notify_item_toggle(ctx, *, item_name: str):
         color = discord.Color.green()
         if current_monitored_item:
             await ctx.send(f"Your DM notification has been switched to **{item_name}** (was: {current_monitored_item}).")
-            await ctx.author.send(f"Your GrowAGarden notification is now for **{item_name}** (was: {current_monitored_item}).")
+            try:
+                await ctx.author.send(f"Your GrowAGarden notification is now for **{item_name}** (was: {current_monitored_item}).")
+            except discord.Forbidden:
+                print(f"Could not DM user {ctx.author.id} for notifyitem change. DMs disabled.")
         else:
             await ctx.send(f"Your DM notification for **{item_name}** has been **enabled**.")
-            await ctx.author.send(f"Your GrowAGarden notification for **{item_name}** is now **enabled**.")
+            try:
+                await ctx.author.send(f"Your GrowAGarden notification for **{item_name}** is now **enabled**.")
+            except discord.Forbidden:
+                print(f"Could not DM user {ctx.author.id} for notifyitem enable. DMs disabled.")
         check_achievement(user_id, "FIRST_DM_NOTIFICATION") # Could make a specific one for this too
 
     save_notify_items()
@@ -1710,15 +1754,19 @@ async def on_reaction_add(reaction, user):
             if success:
                 # Remove all reactions to prevent spam/re-use (and re-add them after turn)
                 try:
+                    # Clear all reactions from the message after a valid move to prevent re-using old reactions
+                    # This also ensures only valid current moves can be reacted to.
                     await reaction.message.clear_reactions()
                 except discord.Forbidden:
+                    print(f"Bot missing permissions to clear reactions in channel {reaction.message.channel.id}.")
                     pass # Bot might not have permission
 
                 if game._check_win():
                     game.winner = game.current_turn_emoji
                     # Update stats
                     update_game_stats(game.players[game.winner].id, "c4", "win")
-                    update_game_stats(game.players[C4_RED if game.winner == C4_YELLOW else C4_YELLOW].id, "c4", "loss")
+                    other_player_id = game.players[C4_RED if game.winner == C4_YELLOW else C4_YELLOW].id
+                    update_game_stats(other_player_id, "c4", "loss")
                     await game.update_game_message()
                     await reaction.message.channel.send(f"Congratulations, {user.mention}! You won the Connect4 game!")
                     del active_c4_games[channel_id] # Game over, remove from active games
@@ -1925,17 +1973,18 @@ async def handle_tictactoe_reaction(reaction, user):
             if success:
                 # Remove all reactions to prevent spam/re-use (and re-add them after turn)
                 try:
+                    # Clear all reactions from the message after a valid move
                     await reaction.message.clear_reactions()
                 except discord.Forbidden:
+                    print(f"Bot missing permissions to clear reactions in channel {reaction.message.channel.id}.")
                     pass
-                # No confirmation message needed here if the move is successful, as it updates the board
-                # await reaction.message.channel.send(f"{user.mention}, {error_msg} Please choose another spot.", delete_after=5)
 
                 if game._check_win():
                     game.winner = game.current_turn_emoji
                     # Update stats
                     update_game_stats(game.players[game.winner].id, "ttt", "win")
-                    update_game_stats(game.players[TTT_X if game.winner == TTT_O else TTT_O].id, "ttt", "loss")
+                    other_player_id = game.players[TTT_X if game.winner == TTT_O else TTT_O].id
+                    update_game_stats(other_player_id, "ttt", "loss")
                     await game.update_game_message()
                     await reaction.message.channel.send(f"Congratulations, {user.mention}! You won the Tic-Tac-Toe game!")
                     del active_tictactoe_games[channel_id] # Game over, remove from active games
@@ -2007,12 +2056,18 @@ async def c4_leaderboard(ctx):
     Usage: !c4leaderboard
     """
     leaderboard_data = []
+    # Fetch all members to get display names, if available in cache
+    # If not in cache, bot.get_user(user_id) will return None, need to fetch_user
     for user_id, stats in game_stats.items():
-        if stats["c4_wins"] > 0:
-            user = bot.get_user(user_id)
+        if stats["c4_wins"] > 0 or stats["c4_losses"] > 0 or stats["c4_draws"] > 0:
+            user = bot.get_user(user_id) # Try to get from cache first
             if user:
                 leaderboard_data.append({"user": user, "wins": stats["c4_wins"], "losses": stats["c4_losses"], "draws": stats["c4_draws"]})
-    
+            else:
+                # User not in cache, skip for now to avoid blocking on fetch_user for many users
+                # This could be improved by fetching in batches or only when explicitly needed.
+                print(f"User {user_id} not in cache for c4leaderboard. Skipping their entry for this run.")
+
     if not leaderboard_data:
         await ctx.send("No Connect4 games recorded yet for the leaderboard.")
         return
@@ -2044,10 +2099,12 @@ async def ttt_leaderboard(ctx):
     """
     leaderboard_data = []
     for user_id, stats in game_stats.items():
-        if stats["ttt_wins"] > 0:
-            user = bot.get_user(user_id)
+        if stats["ttt_wins"] > 0 or stats["ttt_losses"] > 0 or stats["ttt_draws"] > 0:
+            user = bot.get_user(user_id) # Try to get from cache first
             if user:
                 leaderboard_data.append({"user": user, "wins": stats["ttt_wins"], "losses": stats["ttt_losses"], "draws": stats["ttt_draws"]})
+            else:
+                print(f"User {user_id} not in cache for tttleaderboard. Skipping their entry for this run.")
     
     if not leaderboard_data:
         await ctx.send("No Tic-Tac-Toe games recorded yet for the leaderboard.")
@@ -2139,13 +2196,15 @@ async def audit_log_command(ctx, action_type: str = None, user: discord.Member =
     selected_action = None
     if action_type:
         # Find action type, allowing for partial or case-insensitive matches
+        found_match = False
         for key, action_enum in audit_log_actions.items():
             if action_type.lower() in key.lower():
                 selected_action = action_enum
+                found_match = True
                 break
         
-        if not selected_action:
-            await ctx.send(f"Invalid audit log action type: `{action_type}`. Please choose from: {', '.join(audit_log_actions.keys())}")
+        if not found_match: # Use found_match to check if a valid action was found
+            await ctx.send(f"Invalid audit log action type: `{action_type}`. Please choose from a partial match of these: `{', '.join(audit_log_actions.keys())}`")
             return
 
     embed = discord.Embed(
@@ -2181,7 +2240,7 @@ async def audit_log_command(ctx, action_type: str = None, user: discord.Member =
                 else:
                     target_info = f"Target ID: `{entry.target.id}`"
 
-            reason_info = f"Reason: `{entry.reason}`" if entry.reason else ""
+            reason_info = f"Reason: `{entry.reason}`" if entry.reason else "No reason provided."
             
             description_lines.append(
                 f"**{entry.action.name.replace('_', ' ').title()}** by **{entry.user.display_name}** (`{entry.user.id}`)\n"
@@ -2214,7 +2273,9 @@ async def my_achievements_command(ctx):
     if not user_achievements:
         embed.description = "You haven't unlocked any achievements yet. Keep interacting with the bot!"
     else:
-        description = "\n".join([f"🏆 **{ACHIEVEMENT_DEFINITIONS.get(ach_id, ach_id)}**" for ach_id in user_achievements])
+        # Sort achievements alphabetically for consistent display
+        user_achievements_sorted = sorted(user_achievements, key=lambda x: ACHIEVEMENT_DEFINITIONS.get(x, x))
+        description = "\n".join([f"🏆 **{ACHIEVEMENT_DEFINITIONS.get(ach_id, ach_id)}**" for ach_id in user_achievements_sorted])
         embed.description = description
     
     await ctx.send(embed=embed)
@@ -2227,14 +2288,24 @@ async def set_garden(ctx, description: str, image_url: str = None):
     Usage: !setgarden "My beautiful flower bed" [https://example.com/garden.png]
     """
     user_id = ctx.author.id
+    # Ensure description is not too long for Discord embed field
+    if len(description) > 1024:
+        description = description[:1020] + "..."
+        await ctx.send("Your description was too long and has been truncated.")
+
     my_gardens[user_id] = {"description": description}
     if image_url:
         # Basic URL validation (you might want more robust validation)
-        if image_url.startswith(("http://", "https://")) and (image_url.endswith((".png", ".jpg", ".jpeg", ".gif")) or "placehold.co" in image_url):
+        # Added a check for common image file extensions
+        if image_url.startswith(("http://", "https://")) and any(image_url.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".gif", ".webp"]) or "placehold.co" in image_url.lower():
             my_gardens[user_id]["image_url"] = image_url
         else:
-            await ctx.send("Invalid image URL provided. Please ensure it's a direct link to a .png, .jpg, .jpeg, or .gif file. Your description was saved, but the image was not.")
+            await ctx.send("Invalid image URL provided. Please ensure it's a direct link to a `.png`, `.jpg`, `.jpeg`, `.gif`, or `.webp` file. Your description was saved, but the image was not.")
             image_url = None # Don't save invalid URL
+    else:
+        # If no image_url is provided, remove any existing one
+        if "image_url" in my_gardens[user_id]:
+            del my_gardens[user_id]["image_url"]
     
     save_my_gardens()
 
@@ -2273,6 +2344,63 @@ async def show_my_garden(ctx):
         embed.set_image(url=garden_data["image_url"])
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
+
+@bot.command(name="showgardens")
+@commands.cooldown(1, 60, commands.BucketType.channel) # Cooldown to prevent spam
+async def show_random_garden(ctx):
+    """
+    Manually triggers a random user's garden showcase post.
+    Usage: !showgardens
+    """
+    if not my_gardens:
+        await ctx.send("No gardens have been set up by users yet. Be the first with `!setgarden`!")
+        return
+
+    # Filter out gardens without descriptions or where the user might not exist anymore
+    valid_gardens = []
+    for user_id_str, garden_data in my_gardens.items():
+        user_id = int(user_id_str)
+        if "description" in garden_data:
+            user = bot.get_user(user_id) # Try to get from cache
+            if user:
+                valid_gardens.append({"user": user, "data": garden_data})
+            else:
+                # Attempt to fetch user if not in cache, for a more reliable showcase
+                try:
+                    user = await bot.fetch_user(user_id)
+                    valid_gardens.append({"user": user, "data": garden_data})
+                except discord.NotFound:
+                    print(f"User {user_id} not found when trying to fetch for !showgardens. Skipping.")
+                except Exception as e:
+                    print(f"Error fetching user {user_id} for !showgardens: {e}. Skipping.")
+    
+    if not valid_gardens:
+        await ctx.send("Could not find any valid gardens to showcase at this time. Please ensure users have set descriptions for their gardens.")
+        return
+
+    import random
+    selected_garden = random.choice(valid_gardens)
+    user = selected_garden["user"]
+    garden_data = selected_garden["data"]
+
+    embed = discord.Embed(
+        title=f"🏡 Garden Showcase: {user.display_name}'s Garden 🏡",
+        description=garden_data.get("description", "No description set."),
+        color=discord.Color.blue(),
+        timestamp=datetime.utcnow()
+    )
+    if garden_data.get("image_url"):
+        embed.set_image(url=garden_data["image_url"])
+    embed.set_footer(text="made by summers 2000")
+
+    try:
+        await ctx.send(embed=embed)
+        print(f"Manually posted {user.display_name}'s garden to showcase channel via !showgardens.")
+    except discord.Forbidden:
+        await ctx.send("I don't have permission to send messages in this channel for garden showcases.")
+    except Exception as e:
+        await ctx.send(f"An unexpected error occurred while posting garden showcase: `{e}`")
+
 
 @tasks.loop(hours=6) # Posts a random garden every 6 hours
 async def garden_showcase_poster():
@@ -2356,6 +2484,10 @@ async def remind_me(ctx, time_str: str, *, message: str):
     if amount <= 0:
         await ctx.send("Reminder time must be a positive number.")
         return
+    
+    if amount > 365 and unit == 'd': # Limit reminders to max 1 year
+        await ctx.send("You can only set reminders for up to 365 days.")
+        return
 
     delay_seconds = amount * unit_map[unit]
     remind_time = datetime.utcnow() + timedelta(seconds=delay_seconds)
@@ -2368,10 +2500,26 @@ async def remind_me(ctx, time_str: str, *, message: str):
     reminders.sort(key=lambda x: x['remind_time']) # Keep sorted for efficient checking
     save_reminders()
 
-    human_readable_delay = str(timedelta(seconds=delay_seconds)).split('.')[0] # Remove microseconds
-    if "day" in human_readable_delay:
-        human_readable_delay = human_readable_delay.replace("day", "day") # Fix singular/plural if needed
+    # Format human-readable delay more nicely
+    parts = []
+    if delay_seconds >= 86400:
+        d = delay_seconds // 86400
+        parts.append(f"{d} day{'s' if d != 1 else ''}")
+        delay_seconds %= 86400
+    if delay_seconds >= 3600:
+        h = delay_seconds // 3600
+        parts.append(f"{h} hour{'s' if h != 1 else ''}")
+        delay_seconds %= 3600
+    if delay_seconds >= 60:
+        m = delay_seconds // 60
+        parts.append(f"{m} minute{'s' if m != 1 else ''}")
+        delay_seconds %= 60
+    if delay_seconds > 0 or not parts: # Include seconds if there are any remaining or if total delay is less than a minute
+        parts.append(f"{delay_seconds} second{'s' if delay_seconds != 1 else ''}")
     
+    human_readable_delay = ", ".join(parts)
+
+
     embed = discord.Embed(
         title="Reminder Set!",
         description=f"I will remind you about: **`{message}`**\n"
@@ -2390,7 +2538,8 @@ async def reminder_checker():
     reminders_to_send = []
     reminders_to_keep = []
 
-    for reminder in reminders:
+    # Iterate a copy of the list to avoid issues if items are removed during iteration
+    for reminder in list(reminders):
         if reminder['remind_time'] <= current_time:
             reminders_to_send.append(reminder)
         else:
@@ -2399,7 +2548,7 @@ async def reminder_checker():
     reminders = reminders_to_keep # Update global list with remaining reminders
     
     if reminders_to_send:
-        save_reminders() # Save state immediately after populating to_send list
+        save_reminders() # Save state immediately after populating to_send list and updating global list
 
     for reminder in reminders_to_send:
         user = bot.get_user(reminder['user_id'])
@@ -2507,7 +2656,8 @@ class ConfirmBanRequestView(discord.ui.View):
                     timestamp=datetime.utcnow()
                 )
                 embed.set_footer(text="made by summers 2000")
-                await self.message.channel.send(embed=embed)
+                # Removed sending ephemeral message here as it might conflict with original DM channel.
+                # await self.message.channel.send(embed=embed) # This was trying to send in DM, but message.channel is the DM channel
             except discord.HTTPException:
                 pass # Message might have been deleted or inaccessible
             finally:
@@ -2589,6 +2739,7 @@ async def on_message(message):
 
             target_member = None
             try:
+                # Use guild.fetch_member to reliably get member object, even if not in cache
                 target_member = await guild.fetch_member(target_user_id)
             except discord.NotFound:
                 # User ID not found in the guild
@@ -2596,7 +2747,7 @@ async def on_message(message):
                     title="🚨 Ban Request Log 🚨",
                     description=f"**Requester:** {requester.mention} (`{requester.id}`)\n"
                                 f"**Requested Ban User ID:** `{target_user_id}`\n"
-                                f"**Status:** User ID not found in the server. No action taken.",
+                                f"**Status:** User ID `{target_user_id}` not found in the server. No action taken.",
                     color=discord.Color.red(),
                     timestamp=datetime.utcnow()
                 )
