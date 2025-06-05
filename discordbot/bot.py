@@ -5,6 +5,7 @@ import aiohttp
 import asyncio
 from datetime import datetime, timedelta
 import json
+import re # For parsing reminder time
 
 # --- Bot Setup ---
 # Define Intents: Crucial for your bot to receive events from Discord.
@@ -29,8 +30,9 @@ WEATHER_API_URL = "https://growagardenapi.vercel.app/api/GetWeather" # This is a
 
 # AUTOSTOCK_CHANNEL_ID will be set dynamically when the !autostock on command is used.
 AUTOSTOCK_CHANNEL_ID = None
+GARDEN_SHOWCASE_CHANNEL_ID = None # Channel for !showgardens (e.g., 123456789012345678) - REPLACE WITH ACTUAL ID
 
-STOCK_LOGS = [] # Stores a history of stock changes
+STOCK_LOGS = [] # Stores a history of stock changes (currently seeds only)
 
 # Bot start time for uptime command
 BOT_START_TIME = datetime.utcnow()
@@ -59,6 +61,22 @@ LAST_KNOWN_DM_ITEM_STATUS = {category: set() for category in DM_MONITORED_CATEGO
 
 DM_USERS_FILE = 'dm_users.json' # File to persist DM_NOTIFIED_USERS
 
+# --- New Feature Data Storage ---
+GAME_STATS_FILE = 'game_stats.json'
+game_stats = {} # {user_id: {"c4_wins": X, "c4_losses": Y, "c4_draws": Z, "ttt_wins": X, ...}}
+
+ACHIEVEMENTS_FILE = 'achievements.json'
+achievements = {} # {user_id: ["achievement_id_1", "achievement_id_2"]}
+
+NOTIFY_ITEMS_FILE = 'notify_items.json'
+notify_items = {} # {user_id: "item_name"} (only one item per user at a time)
+
+MY_GARDENS_FILE = 'my_gardens.json'
+my_gardens = {} # {user_id: {"description": "...", "image_url": "..."}}
+
+REMINDERS_FILE = 'reminders.json'
+reminders = [] # [{"user_id": ..., "remind_time": timestamp, "message": "..."}]
+
 # --- Ban Request Specifics ---
 BAN_REQUEST_LOG_CHANNEL_ID = 1379985805027840120 # Channel to send ban request logs
 BOOSTING_ROLE_ID = 1302076375922118696 # Role ID for users who cannot be banned
@@ -67,41 +85,164 @@ BOOSTING_ROLE_ID = 1302076375922118696 # Role ID for users who cannot be banned
 # {user_id: {"state": "awaiting_payment_confirmation" | "awaiting_userid", "guild_id": int}}
 BAN_REQUEST_STATES = {}
 
-# --- Helper Functions for DM Notification Persistence ---
-def load_dm_users():
-    """Loads DM notification user data from a JSON file."""
-    global DM_NOTIFIED_USERS
-    if os.path.exists(DM_USERS_FILE):
-        with open(DM_USERS_FILE, 'r') as f:
+# --- Achievement Definitions ---
+ACHIEVEMENT_DEFINITIONS = {
+    "FIRST_C4_WIN": "First Connect4 Victory!",
+    "FIRST_TTT_WIN": "First Tic-Tac-Toe Victory!",
+    "FIRST_AUTOSTOCK_TOGGLE": "Autostock Activator!",
+    "FIRST_DM_NOTIFICATION": "Stock Alert Pioneer!",
+    "FIRST_REMINDER_SET": "Time Bender!",
+    "FIRST_GARDEN_SHOWCASE": "Budding Botanist!",
+    "FIVE_C4_WINS": "Connect4 Pro!",
+    "FIVE_TTT_WINS": "Tic-Tac-Toe Master!"
+}
+
+# --- Helper Functions for Data Persistence (JSON files) ---
+def load_data(file_path, default_data={}):
+    if os.path.exists(file_path):
+        with open(file_path, 'r') as f:
             try:
                 data = json.load(f)
-                # Convert string keys back to int for user IDs
-                loaded_users = {}
-                for k, v in data.items():
-                    user_id = int(k)
-                    # Ensure each user has default preferences for all types
-                    loaded_users[user_id] = {
-                        "seeds": v.get("seeds", False),
-                        "gear": v.get("gear", False)
-                    }
-                DM_NOTIFIED_USERS = loaded_users
-                print(f"Loaded {len(DM_NOTIFIED_USERS)} DM notification users.")
+                print(f"Loaded data from {file_path}.")
+                return data
             except json.JSONDecodeError:
-                print(f"Error decoding {DM_USERS_FILE}. Starting with empty DM user list.")
-                DM_NOTIFIED_USERS = {}
+                print(f"Error decoding {file_path}. Starting with empty data.")
+                return default_data
     else:
-        DM_NOTIFIED_USERS = {}
-        print(f"{DM_USERS_FILE} not found. Starting with empty DM user list.")
+        print(f"{file_path} not found. Starting with empty data.")
+        return default_data
 
-def save_dm_users():
-    """Saves DM notification user data to a JSON file."""
-    with open(DM_USERS_FILE, 'w') as f:
-        # Convert int keys to string for JSON serialization
-        json.dump({str(k): v for k, v in DM_NOTIFIED_USERS.items()}, f, indent=4)
-    print(f"Saved {len(DM_NOTIFIED_USERS)} DM notification users.")
+def save_data(file_path, data):
+    with open(file_path, 'w') as f:
+        json.dump(data, f, indent=4)
+    print(f"Saved data to {file_path}.")
+
+def load_game_stats():
+    global game_stats
+    game_stats = load_data(GAME_STATS_FILE, {})
+    # Ensure stats are ints and initialized
+    for user_id_str, stats in game_stats.items():
+        user_id = int(user_id_str)
+        game_stats[user_id] = {
+            "c4_wins": stats.get("c4_wins", 0),
+            "c4_losses": stats.get("c4_losses", 0),
+            "c4_draws": stats.get("c4_draws", 0),
+            "ttt_wins": stats.get("ttt_wins", 0),
+            "ttt_losses": stats.get("ttt_losses", 0),
+            "ttt_draws": stats.get("ttt_draws", 0)
+        }
+    game_stats = {int(k): v for k, v in game_stats.items()} # Ensure keys are ints
+
+def save_game_stats():
+    # Convert int keys to string for JSON serialization
+    save_data(GAME_STATS_FILE, {str(k): v for k, v in game_stats.items()})
+
+def update_game_stats(user_id, game_type, result): # game_type: "c4" or "ttt", result: "win", "loss", "draw"
+    if user_id not in game_stats:
+        game_stats[user_id] = {"c4_wins": 0, "c4_losses": 0, "c4_draws": 0, "ttt_wins": 0, "ttt_losses": 0, "ttt_draws": 0}
+    
+    if result == "win":
+        game_stats[user_id][f"{game_type}_wins"] += 1
+    elif result == "loss":
+        game_stats[user_id][f"{game_type}_losses"] += 1
+    elif result == "draw":
+        game_stats[user_id][f"{game_type}_draws"] += 1
+    save_game_stats()
+
+    # Check for achievements
+    check_achievement(user_id, f"FIRST_{game_type.upper()}_WIN")
+    if game_stats[user_id][f"{game_type}_wins"] >= 5:
+        check_achievement(user_id, f"FIVE_{game_type.upper()}_WINS")
 
 
-# --- Helper Function for API Calls ---
+def load_achievements():
+    global achievements
+    achievements = load_data(ACHIEVEMENTS_FILE, {})
+    # Ensure achievement lists are properly initialized
+    achievements = {int(k): v for k, v in achievements.items()} # Ensure keys are ints
+
+def save_achievements():
+    save_data(ACHIEVEMENTS_FILE, {str(k): v for k, v in achievements.items()})
+
+async def grant_achievement(user_id, achievement_id):
+    if user_id not in achievements:
+        achievements[user_id] = []
+    
+    if achievement_id not in achievements[user_id]:
+        achievements[user_id].append(achievement_id)
+        save_achievements()
+        user = bot.get_user(user_id) or await bot.fetch_user(user_id)
+        if user:
+            try:
+                embed = discord.Embed(
+                    title="🏆 Achievement Unlocked! 🏆",
+                    description=f"You unlocked: **{ACHIEVEMENT_DEFINITIONS.get(achievement_id, achievement_id)}**",
+                    color=discord.Color.gold(),
+                    timestamp=datetime.utcnow()
+                )
+                embed.set_footer(text="made by summers 2000")
+                await user.send(embed=embed)
+                print(f"Granted achievement '{achievement_id}' to {user.name} ({user_id}).")
+            except discord.Forbidden:
+                print(f"Could not DM achievement to {user.name} ({user_id}). DMs disabled.")
+            except Exception as e:
+                print(f"Error sending achievement DM: {e}")
+
+def check_achievement(user_id, achievement_id):
+    if user_id not in achievements or achievement_id not in achievements[user_id]:
+        # Schedule the coroutine to be run
+        bot.loop.create_task(grant_achievement(user_id, achievement_id))
+
+
+def load_notify_items():
+    global notify_items
+    notify_items = load_data(NOTIFY_ITEMS_FILE, {})
+    notify_items = {int(k): v for k, v in notify_items.items()} # Ensure keys are ints
+
+def save_notify_items():
+    save_data(NOTIFY_ITEMS_FILE, {str(k): v for k, v in notify_items.items()})
+
+
+def load_my_gardens():
+    global my_gardens
+    my_gardens = load_data(MY_GARDENS_FILE, {})
+    my_gardens = {int(k): v for k, v in my_gardens.items()} # Ensure keys are ints
+
+def save_my_gardens():
+    save_data(MY_GARDENS_FILE, {str(k): v for k, v in my_gardens.items()})
+
+
+def load_reminders():
+    global reminders
+    reminders_raw = load_data(REMINDERS_FILE, [])
+    reminders = []
+    for r_data in reminders_raw:
+        try:
+            # Convert timestamp back to datetime object
+            remind_time_dt = datetime.fromisoformat(r_data['remind_time'])
+            reminders.append({
+                "user_id": int(r_data['user_id']),
+                "remind_time": remind_time_dt,
+                "message": r_data['message']
+            })
+        except (ValueError, KeyError) as e:
+            print(f"Error loading reminder data: {e} - Skipping malformed entry: {r_data}")
+    # Sort reminders by time so the checker can process them efficiently
+    reminders.sort(key=lambda x: x['remind_time'])
+    print(f"Loaded {len(reminders)} reminders.")
+
+def save_reminders():
+    # Convert datetime objects to ISO format strings for JSON serialization
+    reminders_to_save = []
+    for r in reminders:
+        reminders_to_save.append({
+            "user_id": str(r['user_id']), # Save as string for JSON key consistency
+            "remind_time": r['remind_time'].isoformat(),
+            "message": r['message']
+        })
+    save_data(REMINDERS_FILE, reminders_to_save)
+
+# --- Helper Functions for API Calls ---
 async def fetch_api_data(url, method='GET', json_data=None):
     """Fetches data from a given API URL."""
     async with aiohttp.ClientSession() as session:
@@ -200,6 +341,11 @@ async def on_ready():
     print("Bot is ready to receive commands!")
     
     load_dm_users() # Load DM notification users on startup
+    load_game_stats() # Load game stats
+    load_achievements() # Load achievements
+    load_notify_items() # Load specific item notifications
+    load_my_gardens() # Load user garden data
+    load_reminders() # Load reminders
 
     # Start the autostock task when the bot is ready
     if not autostock_checker.is_running():
@@ -207,6 +353,16 @@ async def on_ready():
         print("Autostock checker task started.")
     else:
         print("Autostock checker task is already running.")
+    
+    # Start the reminder checker task
+    if not reminder_checker.is_running():
+        reminder_checker.start()
+        print("Reminder checker task started.")
+    
+    # Start the garden showcase task
+    if not garden_showcase_poster.is_running():
+        garden_showcase_poster.start()
+        print("Garden showcase poster task started.")
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -391,6 +547,7 @@ async def autostock_toggle(ctx, status: str = None):
         await ctx.send(f"Auto-stock updates are now **enabled** and will be sent to this channel (<#{AUTOSTOCK_CHANNEL_ID}>).")
         # Trigger an immediate check when turned on, to send current stock
         await autostock_checker()
+        check_achievement(ctx.author.id, "FIRST_AUTOSTOCK_TOGGLE")
     elif status == "off":
         if not AUTOSTOCK_ENABLED:
             await ctx.send("Auto-stock is already disabled.")
@@ -404,7 +561,7 @@ async def autostock_toggle(ctx, status: str = None):
 @tasks.loop(seconds=5) # Checks every 5 seconds for immediate updates
 async def autostock_checker():
     """Background task to check for new stock updates."""
-    global AUTOSTOCK_ENABLED, LAST_STOCK_DATA, AUTOSTOCK_CHANNEL_ID, STOCK_LOGS, LAST_KNOWN_DM_ITEM_STATUS, DM_NOTIFIED_USERS
+    global AUTOSTOCK_ENABLED, LAST_STOCK_DATA, AUTOSTOCK_CHANNEL_ID, STOCK_LOGS, LAST_KNOWN_DM_ITEM_STATUS, DM_NOTIFIED_USERS, notify_items
 
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Autostock checker: Fetching stock data...")
     current_stock_data = await fetch_api_data(STOCK_API_URL)
@@ -412,157 +569,200 @@ async def autostock_checker():
     if current_stock_data is None:
         print("Autostock: Failed to fetch current stock data. Skipping update for this cycle.")
         # Don't return here, as DM notifications might still work if API was only temporarily down
-    else:
-        # Helper to normalize the ENTIRE stock data for comparison (order-independent comparison of all items)
-        def normalize_full_stock_data(data):
-            if not data:
-                return frozenset()
+        return # Skip further processing if API call failed
 
-            normalized_items = []
-            for category_key, items_list in data.items():
-                # Skip 'lastSeen' as it's metadata, not actual stock
-                if category_key == 'lastSeen':
-                    continue
-                if isinstance(items_list, list):
-                    for item in items_list:
-                        # Convert each item dict to a frozenset of its key-value pairs for hashability
-                        # Exclude 'image' and 'emoji' from comparison as they don't signify a stock change
-                        comparable_item = {k: v for k, v in item.items() if k not in ['image', 'emoji']}
-                        normalized_items.append(frozenset(comparable_item.items()))
-            return frozenset(normalized_items)
+    # Helper to normalize the ENTIRE stock data for comparison (order-independent comparison of all items)
+    def normalize_full_stock_data(data):
+        if not data:
+            return frozenset()
 
-        normalized_current = normalize_full_stock_data(current_stock_data)
-        normalized_last = normalize_full_stock_data(LAST_STOCK_DATA)
+        normalized_items = []
+        for category_key, items_list in data.items():
+            # Skip 'lastSeen' as it's metadata, not actual stock
+            if category_key == 'lastSeen':
+                continue
+            if isinstance(items_list, list):
+                for item in items_list:
+                    # Convert each item dict to a frozenset of its key-value pairs for hashability
+                    # Exclude 'image' and 'emoji' from comparison as they don't signify a stock change
+                    comparable_item = {k: v for k, v in item.items() if k not in ['image', 'emoji']}
+                    normalized_items.append(frozenset(comparable_item.items()))
+        return frozenset(normalized_items)
 
-        # Check if stock data has genuinely changed or if it's the first run
-        if LAST_STOCK_DATA is None or normalized_current != normalized_last:
-            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Autostock checker: Stock change detected!")
-            if AUTOSTOCK_ENABLED and AUTOSTOCK_CHANNEL_ID is not None:
-                channel = bot.get_channel(AUTOSTOCK_CHANNEL_ID)
-                if channel:
-                    # Create a single embed for all relevant stock types
-                    embed = create_stock_embed(current_stock_data, title="New Shop Stock Update!")
-                    try:
-                        await channel.send(embed=embed)
-                        print(f"Autostock: New stock detected and sent to channel {channel.name} ({channel.id}).")
+    normalized_current = normalize_full_stock_data(current_stock_data)
+    normalized_last = normalize_full_stock_data(LAST_STOCK_DATA)
 
-                        # Log the stock change (can be expanded to log more details)
-                        stock_time = datetime.now()
-                        # Get names for logging from a few categories
-                        log_details = []
-                        for cat_key in ['seedsStock', 'eggStock', 'gearStock', 'cosmeticsStock', 'honeyStock']:
-                            items = current_stock_data.get(cat_key, [])
-                            if items:
-                                item_names = [item.get('name', 'Unknown') for item in items]
-                                log_details.append(f"{cat_key.replace('Stock', '').capitalize()}: {', '.join(item_names)}")
+    # Check if stock data has genuinely changed or if it's the first run
+    if LAST_STOCK_DATA is None or normalized_current != normalized_last:
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Autostock checker: Stock change detected!")
+        if AUTOSTOCK_ENABLED and AUTOSTOCK_CHANNEL_ID is not None:
+            channel = bot.get_channel(AUTOSTOCK_CHANNEL_ID)
+            if channel:
+                # Create a single embed for all relevant stock types
+                embed = create_stock_embed(current_stock_data, title="New Shop Stock Update!")
+                try:
+                    await channel.send(embed=embed)
+                    print(f"Autostock: New stock detected and sent to channel {channel.name} ({channel.id}).")
+
+                    # Log the stock change for seeds only
+                    stock_time = datetime.now()
+                    seeds_in_current_stock = current_stock_data.get('seedsStock', [])
+                    seeds_in_last_stock = LAST_STOCK_DATA.get('seedsStock', []) if LAST_STOCK_DATA else []
+                    
+                    normalized_current_seeds = frozenset(
+                        frozenset({k: v for k, v in item.items() if k not in ['image', 'emoji']}.items())
+                        for item in seeds_in_current_stock
+                    )
+                    normalized_last_seeds = frozenset(
+                        frozenset({k: v for k, v in item.items() if k not in ['image', 'emoji']}.items())
+                        for item in seeds_in_last_stock
+                    )
+
+                    if normalized_current_seeds != normalized_last_seeds:
+                        seeds_log_details = []
+                        if seeds_in_current_stock:
+                            item_names = [item.get('name', 'Unknown') for item in seeds_in_current_stock]
+                            seeds_log_details.append(f"Seeds: {', '.join(item_names)}")
                         
-                        log_entry = " | ".join(log_details) if log_details else "No new stock items detected for log."
-                        
-                        # Store log only if seeds stock changed
-                        seeds_in_current_stock = current_stock_data.get('seedsStock', [])
-                        seeds_in_last_stock = LAST_STOCK_DATA.get('seedsStock', []) if LAST_STOCK_DATA else []
-                        
-                        normalized_current_seeds = frozenset(
-                            frozenset({k: v for k, v in item.items() if k not in ['image', 'emoji']}.items())
-                            for item in seeds_in_current_stock
-                        )
-                        normalized_last_seeds = frozenset(
-                            frozenset({k: v for k, v in item.items() if k not in ['image', 'emoji']}.items())
-                            for item in seeds_in_last_stock
-                        )
+                        seeds_log_entry = " | ".join(seeds_log_details) if seeds_log_details else "No specific seed changes to report."
+                        STOCK_LOGS.append({'time': stock_time, 'details': seeds_log_entry})
+                        # Keep only the last 10 logs (or adjust as needed)
+                        if len(STOCK_LOGS) > 10:
+                            STOCK_LOGS.pop(0) # Remove the oldest log
 
-                        if normalized_current_seeds != normalized_last_seeds:
-                            seeds_log_details = []
-                            if seeds_in_current_stock:
-                                item_names = [item.get('name', 'Unknown') for item in seeds_in_current_stock]
-                                seeds_log_details.append(f"Seeds: {', '.join(item_names)}")
-                            
-                            seeds_log_entry = " | ".join(seeds_log_details) if seeds_log_details else "No specific seed changes to report."
-                            STOCK_LOGS.append({'time': stock_time, 'details': seeds_log_entry})
-                            # Keep only the last 10 logs (or adjust as needed)
-                            if len(STOCK_LOGS) > 10:
-                                STOCK_LOGS.pop(0) # Remove the oldest log
-
-                    except discord.Forbidden:
-                        print(f"Autostock: Bot does not have permission to send messages/embeds in channel {channel.name} ({channel.id}). Please check bot permissions!")
-                    except Exception as e:
-                        print(f"Autostock: An unexpected error occurred while sending embed: {e}")
-                else:
-                    print(f"Autostock: Configured channel with ID {AUTOSTOCK_CHANNEL_ID} not found or inaccessible. Disabling autostock.")
-                    AUTOSTOCK_ENABLED = False
+                except discord.Forbidden:
+                    print(f"Autostock: Bot does not have permission to send messages/embeds in channel {channel.name} ({channel.id}). Please check bot permissions!")
+                except Exception as e:
+                    print(f"Autostock: An unexpected error occurred while sending embed: {e}")
             else:
-                print("Autostock: Not enabled or channel not set, skipping public channel update.")
-
-            # Always update LAST_STOCK_DATA with the full, new data after comparison and potential notification
-            LAST_STOCK_DATA = current_stock_data
+                print(f"Autostock: Configured channel with ID {AUTOSTOCK_CHANNEL_ID} not found or inaccessible. Disabling autostock.")
+                AUTOSTOCK_ENABLED = False
         else:
-            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Autostock checker: No stock change detected.")
+            print("Autostock: Not enabled or channel not set, skipping public channel update.")
+
+        # Always update LAST_STOCK_DATA with the full, new data after comparison and potential notification
+        LAST_STOCK_DATA = current_stock_data
+    else:
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Autostock checker: No overall stock change detected.")
 
 
-        # --- DM Notification Specific Logic (runs regardless of main autostock status) ---
-        for api_category_key, monitor_info in DM_MONITORED_CATEGORIES.items():
-            dm_type = monitor_info["type"]
-            monitored_items_list = monitor_info["items"]
+    # --- DM Notification Specific Logic (for categories and specific items) ---
+    for api_category_key, monitor_info in DM_MONITORED_CATEGORIES.items():
+        dm_type = monitor_info["type"]
+        monitored_items_list = monitor_info["items"]
 
-            category_stock = current_stock_data.get(api_category_key, [])
-            
-            currently_available_dm_items = {
-                item['name'] for item in category_stock
-                if item['name'] in monitored_items_list and item.get('value', 0) > 0
-            }
+        category_stock = current_stock_data.get(api_category_key, [])
+        
+        currently_available_dm_items = {
+            item['name'] for item in category_stock
+            if item['name'] in monitored_items_list and item.get('value', 0) > 0
+        }
 
-            newly_in_stock_for_dm = currently_available_dm_items - LAST_KNOWN_DM_ITEM_STATUS[api_category_key]
+        newly_in_stock_for_dm = currently_available_dm_items - LAST_KNOWN_DM_ITEM_STATUS[api_category_key]
 
-            if newly_in_stock_for_dm:
-                log_channel = bot.get_channel(DM_NOTIFICATION_LOG_CHANNEL_ID)
-                if log_channel:
-                    log_message = f"**{datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')} - New DM-Monitored {dm_type.capitalize()} In Stock:**\n"
-                    for item_name in newly_in_stock_for_dm:
-                        log_message += f"- `{item_name}` is now in stock!\n"
-                    try:
-                        await log_channel.send(log_message)
-                        print(f"Logged new DM-monitored items to channel {log_channel.name} ({log_channel.id}).")
-                    except discord.Forbidden:
-                        print(f"Bot does not have permission to send messages in DM notification log channel {log_channel.id}.")
-                    except Exception as e:
-                        print(f"Error sending log to DM notification channel: {e}")
+        if newly_in_stock_for_dm:
+            log_channel = bot.get_channel(DM_NOTIFICATION_LOG_CHANNEL_ID)
+            if log_channel:
+                log_message = f"**{datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')} - New DM-Monitored {dm_type.capitalize()} In Stock:**\n"
+                for item_name in newly_in_stock_for_dm:
+                    log_message += f"- `{item_name}` is now in stock!\n"
+                try:
+                    await log_channel.send(log_message)
+                    print(f"Logged new DM-monitored items to channel {log_channel.name} ({log_channel.id}).")
+                except discord.Forbidden:
+                    print(f"Bot does not have permission to send messages in DM notification log channel {log_channel.id}.")
+                except Exception as e:
+                    print(f"Error sending log to DM notification channel: {e}")
 
+            dm_embed = discord.Embed(
+                title=f"GrowAGarden Stock Alert! ({dm_type.capitalize()})",
+                description=f"The following {dm_type} you're monitoring are now in stock:",
+                color=discord.Color.orange(),
+                timestamp=datetime.utcnow()
+            )
+            dm_embed.set_footer(text="made by summers 2000")
+
+            for item_name in newly_in_stock_for_dm:
+                dm_embed.add_field(name=f"✅ {item_name}", value="Available now!", inline=False)
+
+            for user_id, preferences in DM_NOTIFIED_USERS.items():
+                # Check if this specific type of DM is enabled for the user
+                if preferences.get(dm_type, False):
+                    user = bot.get_user(user_id)
+                    if user is None:
+                        try:
+                            user = await bot.fetch_user(user_id)
+                        except discord.NotFound:
+                            print(f"DM User {user_id} not found. Skipping DM.")
+                            continue
+                        except Exception as e:
+                            print(f"Error fetching DM user {user_id}: {e}. Skipping DM.")
+                            continue
+
+                    if user:
+                        try:
+                            await user.send(embed=dm_embed)
+                            print(f"Sent DM notification to {user.name} ({user.id}) for new {dm_type}.")
+                            check_achievement(user.id, "FIRST_DM_NOTIFICATION")
+                        except discord.Forbidden:
+                            print(f"Could not send DM to {user.name} ({user.id}). User has DMs disabled or blocked bot.")
+                        except Exception as e:
+                            print(f"An unexpected error occurred while sending DM to {user.name} ({user.id}): {e}")
+
+        # Update the last known status for this category
+        LAST_KNOWN_DM_ITEM_STATUS[api_category_key] = currently_available_dm_items
+    
+    # Specific Item DM Notification Check
+    for user_id, monitored_item_name in notify_items.items():
+        # Iterate through all stock categories to find the item
+        found_item_in_stock = False
+        for category_key, items_list in current_stock_data.items():
+            if category_key == 'lastSeen': continue
+            if isinstance(items_list, list):
+                for item in items_list:
+                    if item.get('name') == monitored_item_name and item.get('value', 0) > 0:
+                        found_item_in_stock = True
+                        break
+            if found_item_in_stock:
+                break
+        
+        last_item_status = LAST_KNOWN_DM_ITEM_STATUS.get(f"notifyItem_{user_id}", set())
+        
+        if found_item_in_stock and monitored_item_name not in last_item_status:
+            # Item is newly in stock for this user
+            user = bot.get_user(user_id)
+            if user is None:
+                try:
+                    user = await bot.fetch_user(user_id)
+                except discord.NotFound:
+                    print(f"NotifyItem DM User {user_id} not found. Skipping DM.")
+                    continue
+                except Exception as e:
+                    print(f"Error fetching NotifyItem DM user {user_id}: {e}. Skipping DM.")
+                    continue
+
+            if user:
                 dm_embed = discord.Embed(
-                    title=f"GrowAGarden Stock Alert! ({dm_type.capitalize()})",
-                    description=f"The following {dm_type} you're monitoring are now in stock:",
-                    color=discord.Color.orange(),
+                    title="GrowAGarden Item Alert!",
+                    description=f"Your monitored item **{monitored_item_name}** is now in stock!",
+                    color=discord.Color.blue(),
                     timestamp=datetime.utcnow()
                 )
                 dm_embed.set_footer(text="made by summers 2000")
-
-                for item_name in newly_in_stock_for_dm:
-                    dm_embed.add_field(name=f"✅ {item_name}", value="Available now!", inline=False)
-
-                for user_id, preferences in DM_NOTIFIED_USERS.items():
-                    # Check if this specific type of DM is enabled for the user
-                    if preferences.get(dm_type, False):
-                        user = bot.get_user(user_id)
-                        if user is None:
-                            try:
-                                user = await bot.fetch_user(user_id)
-                            except discord.NotFound:
-                                print(f"DM User {user_id} not found. Skipping DM.")
-                                continue
-                            except Exception as e:
-                                print(f"Error fetching DM user {user_id}: {e}. Skipping DM.")
-                                continue
-
-                        if user:
-                            try:
-                                await user.send(embed=dm_embed)
-                                print(f"Sent DM notification to {user.name} ({user.id}) for new {dm_type}.")
-                            except discord.Forbidden:
-                                print(f"Could not send DM to {user.name} ({user.id}). User has DMs disabled or blocked bot.")
-                            except Exception as e:
-                                print(f"An unexpected error occurred while sending DM to {user.name} ({user.id}): {e}")
-
-            # Update the last known status for this category
-            LAST_KNOWN_DM_ITEM_STATUS[api_category_key] = currently_available_dm_items
+                try:
+                    await user.send(embed=dm_embed)
+                    print(f"Sent DM notification to {user.name} ({user.id}) for item '{monitored_item_name}'.")
+                    check_achievement(user.id, "FIRST_DM_NOTIFICATION") # Could make a specific one for this too
+                except discord.Forbidden:
+                    print(f"Could not send DM to {user.name} ({user.id}). DMs disabled for item notification.")
+                except Exception as e:
+                    print(f"An unexpected error occurred while sending item DM to {user.name} ({user.id}): {e}")
+        
+        # Update specific item status for this user
+        if found_item_in_stock:
+            LAST_KNOWN_DM_ITEM_STATUS[f"notifyItem_{user_id}"] = {monitored_item_name}
+        else:
+            LAST_KNOWN_DM_ITEM_STATUS[f"notifyItem_{user_id}"] = set()
 
 
 @autostock_checker.before_loop
@@ -578,7 +778,7 @@ async def restock_logs(ctx):
     Usage: !restocklogs
     """
     if not STOCK_LOGS:
-        await ctx.send("No stock logs available yet. The autostock feature needs to be `on` for a while to gather logs.")
+        await ctx.send("No seed stock logs available yet. The autostock feature needs to be `on` for a while to gather logs.")
         return
 
     embed = discord.Embed(
@@ -610,12 +810,18 @@ async def next_restock_time(ctx):
         await ctx.send("Fetching next restock time... please wait a moment.")
         restock_data = await fetch_api_data(RESTOCK_TIME_API_URL)
 
-        if not restock_data or 'timeUntilRestock' not in restock_data:
+        if not restock_data:
             await ctx.send("Apologies, I couldn't retrieve the next restock time. The API might be down or returned no data.")
             return
 
+        # Check for specific keys that might indicate an error or unexpected format
+        if 'timeUntilRestock' not in restock_data or 'humanReadableTime' not in restock_data:
+            print(f"API Error: Missing expected keys in Restock-Time API response. Raw data: {restock_data}")
+            await ctx.send("Apologies, the restock API returned data in an unexpected format. Please try again later or contact an administrator.")
+            return
+
         time_until_restock = restock_data['timeUntilRestock']
-        human_readable_time = restock_data.get('humanReadableTime', 'N/A')
+        human_readable_time = restock_data['humanReadableTime']
 
         embed = discord.Embed(
             title="Next Restock Time",
@@ -1016,7 +1222,7 @@ async def help_command(ctx):
     Usage: !cmds
     """
     embed = discord.Embed(
-        title="GrowAGarden Bot Commands",
+        title="Sacrificed Bot Commands",
         description="Here's a list of all available commands and their usage:",
         color=discord.Color.blue(),
         timestamp=datetime.utcnow()
@@ -1030,7 +1236,7 @@ async def help_command(ctx):
         f"Available categories: `seeds`, `eggs`, `bees`, `cosmetics`, `gear`, `honey`, `night`\n"
         f"`!autostock <on/off>`: Toggles automatic stock updates to the current channel.\n"
         f"`!restocklogs`: Shows recent stock change history.\n"
-        f"`!restock`: Shows the next planned restock time." # Changed to !restock
+        f"`!restock`: Shows the next planned restock time."
     )
     embed.add_field(name="__Stock & Auto-Stock Commands__", value=stock_commands_desc, inline=False)
 
@@ -1041,24 +1247,32 @@ async def help_command(ctx):
         f"`!kick <@user> [reason]`: Kicks a member from the server.\n"
         f"`!mute <@user> [duration_minutes] [reason]`: Mutes a member. Requires a 'Muted' role.\n"
         f"`!unmute <@user>`: Unmutes a member.\n"
-        f"`!slowmode <seconds>`: Sets slowmode for the channel (0 to disable).\n"
-        f"`!clear <amount>` (or `!purge`): Deletes a specified number of messages (max 100)."
+        f"`!slowmode <seconds> (0 to disable)`: Sets slowmode for the channel.\n"
+        f"`!clear <amount>` (or `!purge`): Deletes a specified number of messages (max 100).\n"
+        f"`!auditlog <action_type> [user]`: Views recent server audit log entries. (Requires `View Audit Log` permission)"
     )
     embed.add_field(name="__Moderation Commands__", value=moderation_commands_desc, inline=False)
 
     # --- Utility Commands ---
     utility_commands_desc = (
-        f"`!weather`: Displays current in-game weather conditions (e.g., Rain, Sunny).\n" # Updated description
+        f"`!weather`: Displays current in-game weather conditions (e.g., Rain, Sunny).\n"
         f"`!uptime`: Shows how long the bot has been online.\n"
         f"`!rblxusername <username>`: Finds a Roblox player's profile by username.\n"
-        f"`!cmds` (or `!commands`, `!help`): Displays this help message."
+        f"`!remindme <time> <message>`: Sets a personal reminder (e.g., `!remindme 1h Check crops`).\n"
+        f"`!notifyitem <item_name>`: Toggles DM notifications for a specific item (run again to disable/change).\n"
+        f"`!mygarden`: Shows your saved garden showcase.\n"
+        f"`!setgarden <description> [image_url]`: Sets your garden showcase description and optional image.\n"
+        f"`!myachievements`: Displays your earned achievements."
     )
     embed.add_field(name="__Utility Commands__", value=utility_commands_desc, inline=False)
 
     # --- Game Commands ---
     game_commands_desc = (
         f"`!c4 <@opponent>`: Starts a game of Connect4.\n"
-        f"`!tictactoe <@opponent>`: Starts a game of Tic-Tac-Toe."
+        f"`!tictactoe <@opponent>`: Starts a game of Tic-Tac-Toe.\n"
+        f"`!gamestats`: Shows your Connect4 and Tic-Tac-Toe game statistics.\n"
+        f"`!c4leaderboard`: Shows the Connect4 server leaderboard.\n"
+        f"`!tttleaderboard`: Shows the Tic-Tac-Toe server leaderboard."
     )
     embed.add_field(name="__Game Commands__", value=game_commands_desc, inline=False)
 
@@ -1110,6 +1324,8 @@ async def seed_stock_dm_toggle(ctx):
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
     await ctx.author.send(f"Your GrowAGarden **seed** stock DM notifications are now **{status_message}**.")
+    if status_message == "enabled":
+        check_achievement(user_id, "FIRST_DM_NOTIFICATION")
 
 # --- DM Notification Command for Gear ---
 @bot.command(name="gearstockdm")
@@ -1143,7 +1359,43 @@ async def gear_stock_dm_toggle(ctx):
     embed.set_footer(text="made by summers 2000")
     await ctx.send(embed=embed)
     await ctx.author.send(f"Your GrowAGarden **gear** stock DM notifications are now **{status_message}**.")
+    if status_message == "enabled":
+        check_achievement(user_id, "FIRST_DM_NOTIFICATION")
 
+# --- Specific Item DM Notification Command ---
+@bot.command(name="notifyitem")
+@commands.guild_only()
+@commands.check_any(commands.has_role(DM_NOTIFY_ROLE_ID), commands.has_role(DM_BYPASS_ROLE_ID))
+async def notify_item_toggle(ctx, *, item_name: str):
+    """
+    Toggles DM notifications for a specific item (seed, gear, egg, etc.).
+    Run the command again with the same item name to disable.
+    Usage: !notifyitem <item name>
+    """
+    user_id = ctx.author.id
+    current_monitored_item = notify_items.get(user_id)
+
+    if current_monitored_item and current_monitored_item.lower() == item_name.lower():
+        # User is already monitoring this item, so disable it
+        del notify_items[user_id]
+        status_message = "disabled"
+        color = discord.Color.red()
+        await ctx.send(f"Your DM notification for **{item_name}** has been **disabled**.")
+        await ctx.author.send(f"Your GrowAGarden notification for **{item_name}** is now **disabled**.")
+    else:
+        # Enable monitoring for this new item or change from a different item
+        notify_items[user_id] = item_name
+        status_message = "enabled"
+        color = discord.Color.green()
+        if current_monitored_item:
+            await ctx.send(f"Your DM notification has been switched to **{item_name}** (was: {current_monitored_item}).")
+            await ctx.author.send(f"Your GrowAGarden notification is now for **{item_name}** (was: {current_monitored_item}).")
+        else:
+            await ctx.send(f"Your DM notification for **{item_name}** has been **enabled**.")
+            await ctx.author.send(f"Your GrowAGarden notification for **{item_name}** is now **enabled**.")
+        check_achievement(user_id, "FIRST_DM_NOTIFICATION") # Could make a specific one for this too
+
+    save_notify_items()
 
 # --- Roblox Username Lookup Command ---
 @bot.command(name="rblxusername")
@@ -1464,14 +1716,20 @@ async def on_reaction_add(reaction, user):
 
                 if game._check_win():
                     game.winner = game.current_turn_emoji
+                    # Update stats
+                    update_game_stats(game.players[game.winner].id, "c4", "win")
+                    update_game_stats(game.players[C4_RED if game.winner == C4_YELLOW else C4_YELLOW].id, "c4", "loss")
                     await game.update_game_message()
-                    del active_c4_games[channel_id] # Game over, remove from active games
                     await reaction.message.channel.send(f"Congratulations, {user.mention}! You won the Connect4 game!")
+                    del active_c4_games[channel_id] # Game over, remove from active games
                 elif game._check_draw():
                     game.draw = True
+                    # Update stats for draw
+                    update_game_stats(game.players[C4_RED].id, "c4", "draw")
+                    update_game_stats(game.players[C4_YELLOW].id, "c4", "draw")
                     await game.update_game_message()
-                    del active_c4_games[channel_id]
                     await reaction.message.channel.send("The Connect4 game is a draw!")
+                    del active_c4_games[channel_id]
                 else:
                     game.switch_turn()
                     await game.update_game_message()
@@ -1670,18 +1928,25 @@ async def handle_tictactoe_reaction(reaction, user):
                     await reaction.message.clear_reactions()
                 except discord.Forbidden:
                     pass
-                await reaction.message.channel.send(f"{user.mention}, {error_msg} Please choose another spot.", delete_after=5)
+                # No confirmation message needed here if the move is successful, as it updates the board
+                # await reaction.message.channel.send(f"{user.mention}, {error_msg} Please choose another spot.", delete_after=5)
 
                 if game._check_win():
                     game.winner = game.current_turn_emoji
+                    # Update stats
+                    update_game_stats(game.players[game.winner].id, "ttt", "win")
+                    update_game_stats(game.players[TTT_X if game.winner == TTT_O else TTT_O].id, "ttt", "loss")
                     await game.update_game_message()
-                    del active_tictactoe_games[channel_id] # Game over, remove from active games
                     await reaction.message.channel.send(f"Congratulations, {user.mention}! You won the Tic-Tac-Toe game!")
+                    del active_tictactoe_games[channel_id] # Game over, remove from active games
                 elif game._check_draw():
                     game.draw = True
+                    # Update stats for draw
+                    update_game_stats(game.players[TTT_X].id, "ttt", "draw")
+                    update_game_stats(game.players[TTT_O].id, "ttt", "draw")
                     await game.update_game_message()
-                    del active_tictactoe_games[channel_id]
                     await reaction.message.channel.send("The Tic-Tac-Toe game is a draw!")
+                    del active_tictactoe_games[channel_id]
                 else:
                     game.switch_turn()
                     await game.update_game_message()
@@ -1702,6 +1967,471 @@ async def handle_tictactoe_reaction(reaction, user):
             except discord.Forbidden:
                 pass
             return
+
+
+# --- Game Stats Commands ---
+@bot.command(name="gamestats")
+async def game_stats_command(ctx):
+    """
+    Displays your Connect4 and Tic-Tac-Toe game statistics.
+    Usage: !gamestats
+    """
+    user_id = ctx.author.id
+    stats = game_stats.get(user_id, {"c4_wins": 0, "c4_losses": 0, "c4_draws": 0, "ttt_wins": 0, "ttt_losses": 0, "ttt_draws": 0})
+
+    embed = discord.Embed(
+        title=f"{ctx.author.display_name}'s Game Statistics",
+        color=discord.Color.purple(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+
+    embed.add_field(name="Connect4 Stats", value=(
+        f"Wins: `{stats['c4_wins']}`\n"
+        f"Losses: `{stats['c4_losses']}`\n"
+        f"Draws: `{stats['c4_draws']}`"
+    ), inline=True)
+
+    embed.add_field(name="Tic-Tac-Toe Stats", value=(
+        f"Wins: `{stats['ttt_wins']}`\n"
+        f"Losses: `{stats['ttt_losses']}`\n"
+        f"Draws: `{stats['ttt_draws']}`"
+    ), inline=True)
+
+    await ctx.send(embed=embed)
+
+@bot.command(name="c4leaderboard")
+async def c4_leaderboard(ctx):
+    """
+    Displays the Connect4 server leaderboard.
+    Usage: !c4leaderboard
+    """
+    leaderboard_data = []
+    for user_id, stats in game_stats.items():
+        if stats["c4_wins"] > 0:
+            user = bot.get_user(user_id)
+            if user:
+                leaderboard_data.append({"user": user, "wins": stats["c4_wins"], "losses": stats["c4_losses"], "draws": stats["c4_draws"]})
+    
+    if not leaderboard_data:
+        await ctx.send("No Connect4 games recorded yet for the leaderboard.")
+        return
+
+    leaderboard_data.sort(key=lambda x: x["wins"], reverse=True)
+
+    embed = discord.Embed(
+        title="Connect4 Leaderboard (Top 10 Wins)",
+        color=discord.Color.blue(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+
+    description = ""
+    for i, entry in enumerate(leaderboard_data[:10]):
+        description += f"**{i+1}. {entry['user'].display_name}** - Wins: `{entry['wins']}` | Losses: `{entry['losses']}` | Draws: `{entry['draws']}`\n"
+    
+    if len(leaderboard_data) > 10:
+        description += "\n*...and more!*"
+    
+    embed.description = description if description else "No Connect4 wins yet!"
+    await ctx.send(embed=embed)
+
+@bot.command(name="tttleaderboard")
+async def ttt_leaderboard(ctx):
+    """
+    Displays the Tic-Tac-Toe server leaderboard.
+    Usage: !tttleaderboard
+    """
+    leaderboard_data = []
+    for user_id, stats in game_stats.items():
+        if stats["ttt_wins"] > 0:
+            user = bot.get_user(user_id)
+            if user:
+                leaderboard_data.append({"user": user, "wins": stats["ttt_wins"], "losses": stats["ttt_losses"], "draws": stats["ttt_draws"]})
+    
+    if not leaderboard_data:
+        await ctx.send("No Tic-Tac-Toe games recorded yet for the leaderboard.")
+        return
+
+    leaderboard_data.sort(key=lambda x: x["wins"], reverse=True)
+
+    embed = discord.Embed(
+        title="Tic-Tac-Toe Leaderboard (Top 10 Wins)",
+        color=discord.Color.purple(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+
+    description = ""
+    for i, entry in enumerate(leaderboard_data[:10]):
+        description += f"**{i+1}. {entry['user'].display_name}** - Wins: `{entry['wins']}` | Losses: `{entry['losses']}` | Draws: `{entry['draws']}`\n"
+    
+    if len(leaderboard_data) > 10:
+        description += "\n*...and more!*"
+    
+    embed.description = description if description else "No Tic-Tac-Toe wins yet!"
+    await ctx.send(embed=embed)
+
+
+# --- Audit Log Command ---
+@bot.command(name="auditlog")
+@commands.has_permissions(view_audit_log=True)
+@commands.guild_only()
+async def audit_log_command(ctx, action_type: str = None, user: discord.Member = None):
+    """
+    Views recent server audit log entries.
+    Usage: !auditlog [action_type] [@user]
+    Example: !auditlog ban @user
+    Valid action types (case-insensitive, can be partial): ban, kick, member_update, channel_create, role_update, etc.
+    See: https://discordpy.readthedocs.io/en/latest/api.html#discord.AuditLogAction
+    """
+    audit_log_actions = {
+        "guild_update": discord.AuditLogAction.guild_update,
+        "channel_create": discord.AuditLogAction.channel_create,
+        "channel_update": discord.AuditLogAction.channel_update,
+        "channel_delete": discord.AuditLogAction.channel_delete,
+        "overwrite_create": discord.AuditLogAction.overwrite_create,
+        "overwrite_update": discord.AuditLogAction.overwrite_update,
+        "overwrite_delete": discord.AuditLogAction.overwrite_delete,
+        "kick": discord.AuditLogAction.kick,
+        "member_prune": discord.AuditLogAction.member_prune,
+        "ban": discord.AuditLogAction.ban,
+        "unban": discord.AuditLogAction.unban,
+        "member_update": discord.AuditLogAction.member_update,
+        "member_role_update": discord.AuditLogAction.member_role_update,
+        "role_create": discord.AuditLogAction.role_create,
+        "role_update": discord.AuditLogAction.role_update,
+        "role_delete": discord.AuditLogAction.role_delete,
+        "invite_create": discord.AuditLogAction.invite_create,
+        "invite_update": discord.AuditLogAction.invite_update,
+        "invite_delete": discord.AuditLogAction.invite_delete,
+        "webhook_create": discord.AuditLogAction.webhook_create,
+        "webhook_update": discord.AuditLogAction.webhook_update,
+        "webhook_delete": discord.AuditLogAction.webhook_delete,
+        "emoji_create": discord.AuditLogAction.emoji_create,
+        "emoji_update": discord.AuditLogAction.emoji_update,
+        "emoji_delete": discord.AuditLogAction.emoji_delete,
+        "message_delete": discord.AuditLogAction.message_delete,
+        "message_bulk_delete": discord.AuditLogAction.message_bulk_delete,
+        "message_pin": discord.AuditLogAction.message_pin,
+        "message_unpin": discord.AuditLogAction.message_unpin,
+        "integration_create": discord.AuditLogAction.integration_create,
+        "integration_update": discord.AuditLogAction.integration_update,
+        "integration_delete": discord.AuditLogAction.integration_delete,
+        "thread_create": discord.AuditLogAction.thread_create,
+        "thread_update": discord.AuditLogAction.thread_update,
+        "thread_delete": discord.AuditLogAction.thread_delete,
+        "stage_instance_create": discord.AuditLogAction.stage_instance_create,
+        "stage_instance_update": discord.AuditLogAction.stage_instance_update,
+        "stage_instance_delete": discord.AuditLogAction.stage_instance_delete,
+        "sticker_create": discord.AuditLogAction.sticker_create,
+        "sticker_update": discord.AuditLogAction.sticker_update,
+        "sticker_delete": discord.AuditLogAction.sticker_delete,
+        "guild_scheduled_event_create": discord.AuditLogAction.guild_scheduled_event_create,
+        "guild_scheduled_event_update": discord.AuditLogAction.guild_scheduled_event_update,
+        "guild_scheduled_event_delete": discord.AuditLogAction.guild_scheduled_event_delete,
+        "auto_moderation_configuration": discord.AuditLogAction.auto_moderation_configuration,
+        "auto_moderation_block_message": discord.AuditLogAction.auto_moderation_block_message,
+        "auto_moderation_flag_to_channel": discord.AuditLogAction.auto_moderation_flag_to_channel,
+        "auto_moderation_user_communication_disabled": discord.AuditLogAction.auto_moderation_user_communication_disabled
+    }
+
+    selected_action = None
+    if action_type:
+        # Find action type, allowing for partial or case-insensitive matches
+        for key, action_enum in audit_log_actions.items():
+            if action_type.lower() in key.lower():
+                selected_action = action_enum
+                break
+        
+        if not selected_action:
+            await ctx.send(f"Invalid audit log action type: `{action_type}`. Please choose from: {', '.join(audit_log_actions.keys())}")
+            return
+
+    embed = discord.Embed(
+        title=f"Recent Audit Log Entries",
+        color=discord.Color.orange(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+
+    logs = []
+    try:
+        # Fetch up to 10 recent logs. Adjust limit if needed.
+        async for entry in ctx.guild.audit_logs(limit=10, action=selected_action, user=user):
+            logs.append(entry)
+    except discord.Forbidden:
+        await ctx.send("I don't have permission to view the audit log. Please grant me 'View Audit Log' permission.")
+        return
+    except Exception as e:
+        await ctx.send(f"An error occurred while fetching audit logs: `{e}`")
+        return
+
+    if not logs:
+        embed.description = "No audit log entries found matching your criteria."
+    else:
+        description_lines = []
+        for entry in logs:
+            target_info = ""
+            if entry.target:
+                if isinstance(entry.target, discord.Member):
+                    target_info = f"Target: {entry.target.display_name} (`{entry.target.id}`)"
+                elif hasattr(entry.target, 'name'):
+                    target_info = f"Target: {entry.target.name}"
+                else:
+                    target_info = f"Target ID: `{entry.target.id}`"
+
+            reason_info = f"Reason: `{entry.reason}`" if entry.reason else ""
+            
+            description_lines.append(
+                f"**{entry.action.name.replace('_', ' ').title()}** by **{entry.user.display_name}** (`{entry.user.id}`)\n"
+                f"{target_info}\n"
+                f"{reason_info}\n"
+                f"At: <t:{int(entry.created_at.timestamp())}:F>" # Discord's timestamp format
+            )
+        embed.description = "\n\n".join(description_lines)
+
+    await ctx.send(embed=embed)
+
+
+# --- Achievements Command ---
+@bot.command(name="myachievements")
+async def my_achievements_command(ctx):
+    """
+    Displays your earned achievements.
+    Usage: !myachievements
+    """
+    user_id = ctx.author.id
+    user_achievements = achievements.get(user_id, [])
+
+    embed = discord.Embed(
+        title=f"{ctx.author.display_name}'s Achievements",
+        color=discord.Color.gold(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+
+    if not user_achievements:
+        embed.description = "You haven't unlocked any achievements yet. Keep interacting with the bot!"
+    else:
+        description = "\n".join([f"🏆 **{ACHIEVEMENT_DEFINITIONS.get(ach_id, ach_id)}**" for ach_id in user_achievements])
+        embed.description = description
+    
+    await ctx.send(embed=embed)
+
+# --- My Garden Commands ---
+@bot.command(name="setgarden")
+async def set_garden(ctx, description: str, image_url: str = None):
+    """
+    Sets your personal garden showcase description and an optional image URL.
+    Usage: !setgarden "My beautiful flower bed" [https://example.com/garden.png]
+    """
+    user_id = ctx.author.id
+    my_gardens[user_id] = {"description": description}
+    if image_url:
+        # Basic URL validation (you might want more robust validation)
+        if image_url.startswith(("http://", "https://")) and (image_url.endswith((".png", ".jpg", ".jpeg", ".gif")) or "placehold.co" in image_url):
+            my_gardens[user_id]["image_url"] = image_url
+        else:
+            await ctx.send("Invalid image URL provided. Please ensure it's a direct link to a .png, .jpg, .jpeg, or .gif file. Your description was saved, but the image was not.")
+            image_url = None # Don't save invalid URL
+    
+    save_my_gardens()
+
+    embed = discord.Embed(
+        title="Your Garden Showcase Updated!",
+        description=f"**Description:** {description}",
+        color=discord.Color.green(),
+        timestamp=datetime.utcnow()
+    )
+    if image_url:
+        embed.set_image(url=image_url)
+    embed.set_footer(text="made by summers 2000")
+    await ctx.send(embed=embed)
+    check_achievement(user_id, "FIRST_GARDEN_SHOWCASE")
+
+@bot.command(name="mygarden")
+async def show_my_garden(ctx):
+    """
+    Shows your saved garden showcase.
+    Usage: !mygarden
+    """
+    user_id = ctx.author.id
+    garden_data = my_gardens.get(user_id)
+
+    if not garden_data:
+        await ctx.send("You haven't set up your garden showcase yet! Use `!setgarden \"Your description here\" [optional_image_url]` to set it up.")
+        return
+
+    embed = discord.Embed(
+        title=f"{ctx.author.display_name}'s Garden Showcase",
+        description=garden_data.get("description", "No description set."),
+        color=discord.Color.green(),
+        timestamp=datetime.utcnow()
+    )
+    if garden_data.get("image_url"):
+        embed.set_image(url=garden_data["image_url"])
+    embed.set_footer(text="made by summers 2000")
+    await ctx.send(embed=embed)
+
+@tasks.loop(hours=6) # Posts a random garden every 6 hours
+async def garden_showcase_poster():
+    """Background task to periodically post a random user's garden."""
+    if not GARDEN_SHOWCASE_CHANNEL_ID:
+        print("Garden Showcase channel ID not set. Skipping garden showcase poster.")
+        return
+    
+    channel = bot.get_channel(GARDEN_SHOWCASE_CHANNEL_ID)
+    if not channel:
+        print(f"Garden Showcase channel with ID {GARDEN_SHOWCASE_CHANNEL_ID} not found or inaccessible.")
+        return
+
+    if not my_gardens:
+        print("No gardens saved for showcasing.")
+        return
+
+    # Filter out gardens without descriptions or where the user might not exist anymore
+    valid_gardens = []
+    for user_id_str, garden_data in my_gardens.items():
+        user_id = int(user_id_str)
+        if "description" in garden_data:
+            user = bot.get_user(user_id)
+            if user: # Ensure the user still exists in the bot's cache
+                valid_gardens.append({"user": user, "data": garden_data})
+    
+    if not valid_gardens:
+        print("No valid gardens to showcase.")
+        return
+
+    import random
+    selected_garden = random.choice(valid_gardens)
+    user = selected_garden["user"]
+    garden_data = selected_garden["data"]
+
+    embed = discord.Embed(
+        title=f"🏡 Garden Showcase: {user.display_name}'s Garden 🏡",
+        description=garden_data.get("description", "No description set."),
+        color=discord.Color.blue(),
+        timestamp=datetime.utcnow()
+    )
+    if garden_data.get("image_url"):
+        embed.set_image(url=garden_data["image_url"])
+    embed.set_footer(text="made by summers 2000")
+
+    try:
+        await channel.send(embed=embed)
+        print(f"Posted {user.display_name}'s garden to showcase channel.")
+    except discord.Forbidden:
+        print(f"Bot does not have permission to send messages in garden showcase channel {channel.id}.")
+    except Exception as e:
+        print(f"Error posting garden showcase: {e}")
+
+@garden_showcase_poster.before_loop
+async def before_garden_showcase_poster():
+    await bot.wait_until_ready()
+
+# --- Remind Me Command ---
+@bot.command(name="remindme")
+async def remind_me(ctx, time_str: str, *, message: str):
+    """
+    Sets a personal reminder.
+    Usage: !remindme <time> <message>
+    Time examples: 30s, 5m, 1h, 1d (seconds, minutes, hours, days)
+    """
+    unit_map = {
+        's': 1,      # seconds
+        'm': 60,     # minutes
+        'h': 3600,   # hours
+        'd': 86400   # days
+    }
+
+    match = re.fullmatch(r'(\d+)([smhd])', time_str.lower())
+    if not match:
+        await ctx.send("Invalid time format. Please use a number followed by s (seconds), m (minutes), h (hours), or d (days). E.g., `!remindme 30m Check my crops`")
+        return
+
+    amount = int(match.group(1))
+    unit = match.group(2)
+    
+    if amount <= 0:
+        await ctx.send("Reminder time must be a positive number.")
+        return
+
+    delay_seconds = amount * unit_map[unit]
+    remind_time = datetime.utcnow() + timedelta(seconds=delay_seconds)
+
+    reminders.append({
+        "user_id": ctx.author.id,
+        "remind_time": remind_time,
+        "message": message
+    })
+    reminders.sort(key=lambda x: x['remind_time']) # Keep sorted for efficient checking
+    save_reminders()
+
+    human_readable_delay = str(timedelta(seconds=delay_seconds)).split('.')[0] # Remove microseconds
+    if "day" in human_readable_delay:
+        human_readable_delay = human_readable_delay.replace("day", "day") # Fix singular/plural if needed
+    
+    embed = discord.Embed(
+        title="Reminder Set!",
+        description=f"I will remind you about: **`{message}`**\n"
+                    f"In approximately: `{human_readable_delay}`",
+        color=discord.Color.teal(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_footer(text="made by summers 2000")
+    await ctx.send(embed=embed)
+    check_achievement(ctx.author.id, "FIRST_REMINDER_SET")
+
+@tasks.loop(seconds=10) # Check reminders every 10 seconds
+async def reminder_checker():
+    global reminders
+    current_time = datetime.utcnow()
+    reminders_to_send = []
+    reminders_to_keep = []
+
+    for reminder in reminders:
+        if reminder['remind_time'] <= current_time:
+            reminders_to_send.append(reminder)
+        else:
+            reminders_to_keep.append(reminder)
+    
+    reminders = reminders_to_keep # Update global list with remaining reminders
+    
+    if reminders_to_send:
+        save_reminders() # Save state immediately after populating to_send list
+
+    for reminder in reminders_to_send:
+        user = bot.get_user(reminder['user_id'])
+        if user is None:
+            try:
+                user = await bot.fetch_user(reminder['user_id'])
+            except discord.NotFound:
+                print(f"Reminder: User {reminder['user_id']} not found. Skipping reminder.")
+                continue
+            except Exception as e:
+                print(f"Reminder: Error fetching user {reminder['user_id']}: {e}. Skipping reminder.")
+                continue
+
+        if user:
+            try:
+                embed = discord.Embed(
+                    title="⏰ Your Reminder! ⏰",
+                    description=f"You asked me to remind you about: **`{reminder['message']}`**",
+                    color=discord.Color.orange(),
+                    timestamp=datetime.utcnow()
+                )
+                embed.set_footer(text="made by summers 2000")
+                await user.send(embed=embed)
+                print(f"Sent reminder to {user.name} ({user.id}): {reminder['message']}")
+            except discord.Forbidden:
+                print(f"Could not send reminder DM to {user.name} ({user.id}). DMs disabled.")
+            except Exception as e:
+                print(f"An unexpected error occurred while sending reminder DM to {user.name} ({user.id}): {e}")
+
+@reminder_checker.before_loop
+async def before_reminder_checker():
+    await bot.wait_until_ready()
 
 
 # --- Ban Request View ---
@@ -1728,8 +2458,8 @@ class ConfirmBanRequestView(discord.ui.View):
 
         embed = discord.Embed(
             title="Ban Request: Payment Required",
-            description="Please send $15 to Cash App: **`$sxi659`**\n"
-                        "Once sent, reply to this DM with the **User ID** of the person you want to ban from Sacrificed. [Warning: Make sure you put the userid of the person you want to ban into cashapp aswell]",
+            description="Please send $10 to Cash App: **`$sxi659`**\n"
+                        "Once sent, reply to this DM with the **User ID** of the person you want to ban from Sacrificed.",
             color=discord.Color.gold(),
             timestamp=datetime.utcnow()
         )
@@ -1799,7 +2529,7 @@ async def ban_request(ctx):
 
     ban_request_embed = discord.Embed(
         title="Ban Request Confirmation",
-        description="Before we continue, please note that a ban request costs **$15**. "
+        description="Before we continue, please note that a ban request costs **$10**. "
                     "Are you willing to pay this to get a user banned from Sacrificed?",
         color=discord.Color.blue(),
         timestamp=datetime.utcnow()
