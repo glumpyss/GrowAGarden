@@ -2458,107 +2458,101 @@ async def help_command(ctx):
     )
     embed.set_footer(text="made by summers 2000")
 
-    # --- Moderation Commands ---
-    moderation_commands_desc = (
+    # --- Moderation Commands (Split into multiple fields) ---
+    moderation_commands_desc_1 = (
         f"`!ban <@user> [reason]`: Bans a member from the server.\n"
         f"`!unban <user_id>`: Unbans a user by their ID.\n"
         f"`!kick <@user> [reason]`: Kicks a member from the server.\n"
         f"`!mute <@user> [duration_minutes] [reason]`: Mutes a member. Requires a 'Muted' role.\n"
         f"`!unmute <@user>`: Unmutes a member.\n"
-        f"`!slowmode <seconds> (0 to disable)`: Sets slowmode for the channel.\n"
-        f"`!clear <amount>` (or `!purge`): Deletes a specified number of messages (max 100).\n"
-        f"`!auditlog <action_type> [user]`: Views recent server audit log entries. (Requires `View Audit Log` permission)\n"
-        f"`!warn <@user> [reason]`: Issues a warning to a user.\n"
+        f"`!slowmode <seconds>`: Sets slowmode for the channel (0 to disable).\n"
+        f"`!clear <amount>`: Deletes a specified number of messages (max 100).\n"
+        f"`!auditlog <action>`: Views recent server audit log entries.\n"
+        f"`!warn <@user> [reason]`: Issues a warning to a user."
+    )
+    moderation_commands_desc_2 = (
         f"`!warnings [@user]`: Displays a list of warnings for a user.\n"
-        f"`!warn_remove <@user> <warning_id>`: Removes a specific warning from a user's record.\n"
+        f"`!warn_remove <@user> <id>`: Removes a specific warning.\n"
         f"`!lockdown [reason]`: Locks down the current channel.\n"
         f"`!unlock [reason]`: Unlocks a previously locked channel.\n"
         f"`!softban <@user> [reason]`: Kicks a user and removes messages, but doesn't ban.\n"
-        f"`!nick <@user> [new_nickname]`: Changes a user's nickname or resets it.\n"
-        f"`!voicekick <@user> [reason]`: Disconnects a user from their voice channel.\n"
-        f"`!tempmute <@user> <duration> [reason]`: Mutes a user for a specified duration (e.g., 30m, 1h).\n"
-        f"`!reactionrole <message_id> <emoji> <@role>`: Sets up a reaction role."
+        f"`!nick <@user> [nickname]`: Changes or resets a user's nickname.\n"
+        f"`!voicekick <@user> [reason]`: Disconnects a user from a voice channel.\n"
+        f"`!tempmute <@user> <duration> [reason]`: Mutes a user for a duration (e.g., 30m, 1h).\n"
+        f"`!reactionrole <msg_id> <emoji> <@role>`: Sets up a reaction role."
     )
-    embed.add_field(name="__Moderation Commands__", value=moderation_commands_desc, inline=False)
+    embed.add_field(name="__Moderation Commands__", value=moderation_commands_desc_1, inline=False)
+    embed.add_field(name="\u200b", value=moderation_commands_desc_2, inline=False) # \u200b is a zero-width space for an empty field name
 
     # --- Utility Commands ---
     utility_commands_desc = (
         f"`!uptime`: Shows how long the bot has been online.\n"
-        f"`!remindme <time> <message>`: Sets a personal reminder (e.g., `!remindme 1h Check crops`).\n"
-        f"`!remindme_list`: List all active reminders for you.\n"
-        f"`!remindme_clear`: Clears all your active reminders.\n"
-        f"`!avatar [@user]`: Display a user's avatar.\n"
-        f"`!ping`: Show the bot's latency.\n"
+        f"`!remindme <time> <message>`: Sets a personal reminder (e.g., `1h Check crops`).\n"
+        f"`!remindme_list`: Lists your active reminders.\n"
+        f"`!remindme_clear`: Clears all your reminders.\n"
+        f"`!avatar [@user]`: Displays a user's avatar.\n"
+        f"`!ping`: Shows the bot's latency.\n"
         f"`!define <word>`: Get the definition of a word.\n"
-        f"`!serverinfo`: Display information about the current Discord server.\n"
-        f"`!userinfo [@user]`: Display detailed information about a user.\n"
-        f"`!channelinfo [#channel]`: Displays details about a channel.\n"
-        f"`!roleinfo <role_name>`: Shows information about a specific role."
+        f"`!serverinfo`: Displays server information.\n"
+        f"`!userinfo [@user]`: Displays detailed user information.\n"
+        f"`!channelinfo [#channel]`: Displays channel details.\n"
+        f"`!roleinfo <role_name>`: Shows information about a role."
     )
     embed.add_field(name="__Utility Commands__", value=utility_commands_desc, inline=False)
 
-    # --- Game Commands ---
-    game_commands_desc = (
+    # --- Game & Fun Commands (Combined and split) ---
+    game_fun_commands_desc_1 = (
         f"`!c4 <@opponent>`: Starts a game of Connect4.\n"
         f"`!tictactoe <@opponent>`: Starts a game of Tic-Tac-Toe.\n"
-        f"`!gamestats`: Shows your Connect4 and Tic-Tac-Toe game statistics.\n"
-        f"`!c4leaderboard`: Shows the Connect4 server leaderboard.\n"
-        f"`!tttleaderboard`: Shows the Tic-Tac-Toe server leaderboard.\n"
-        f"`!roll [number]`: Rolls a dice or a number between 1 and [number] (default 100).\n"
-        f"`!lotto <buy [tickets] | draw | status>`: Interact with the server lottery. Costs {LOTTO_TICKET_PRICE} coins per ticket.\n"
-        f"`!blackjack <bet_amount>`: Play a game of Blackjack against the bot.\n"
-        f"`!slots <bet_amount>`: Play a game of Slots."
+        f"`!gamestats`: Shows your game statistics.\n"
+        f"`!c4leaderboard`: Shows the Connect4 leaderboard.\n"
+        f"`!tttleaderboard`: Shows the Tic-Tac-Toe leaderboard.\n"
+        f"`!roll [number]`: Rolls a dice (default 100).\n"
+        f"`!lotto <buy|draw|status>`: Interact with the server lottery.\n"
+        f"`!blackjack <bet>`: Play a game of Blackjack.\n"
+        f"`!slots <bet>`: Play a game of Slots."
     )
-    embed.add_field(name="__Game Commands__", value=game_commands_desc, inline=False)
-
-    # --- Fun/Interactive Commands ---
-    fun_commands_desc = (
+    game_fun_commands_desc_2 = (
         f"`!8ball <question>`: Get a random answer to a yes/no question.\n"
-        f"`!fact`: Fetch a random fact.\n"
-        f"`!joke`: Fetch a random joke.\n"
-        f"`!ship <@user1> <@user2>`: Calculate and display a compatibility score.\n"
-        f"`!poll \"Question\" \"Option 1\" ...`: Create a reaction-based poll.\n"
-        f"`!quote_add \"Quote Text\" - [Author]`: Add a quote to the collection.\n"
-        f"`!quote_random`: Fetch a random quote from the collection."
+        f"`!fact`: Fetches a random fact.\n"
+        f"`!joke`: Fetches a random joke.\n"
+        f"`!ship <@user1> <@user2>`: Calculates compatibility.\n"
+        f"`!poll \"Question\" \"Opt1\" ...`: Creates a reaction poll.\n"
+        f"`!quote_add \"text\" - [author]`: Adds a quote.\n"
+        f"`!quote_random`: Fetches a random quote."
     )
-    embed.add_field(name="__Fun/Interactive Commands__", value=fun_commands_desc, inline=False)
+    embed.add_field(name="__Game & Fun Commands__", value=game_fun_commands_desc_1, inline=False)
+    embed.add_field(name="\u200b", value=game_fun_commands_desc_2, inline=False)
 
-    # --- Ban Request Command ---
-    ban_request_desc = (
-        f"`!banrequest`: Initiates a ban request process via DM. Costs $15."
+    # --- Economy Commands (Split into multiple fields) ---
+    economy_commands_desc_1 = (
+        f"`!balance`: Checks your coin balance.\n"
+        f"`!daily`: Claims your daily coin bonus.\n"
+        f"`!daily_streak`: Displays your daily claim streak.\n"
+        f"`!transfer <@user> <amount>`: Sends coins to another user.\n"
+        f"`!shop`: Views items available for purchase.\n"
+        f"`!buy <item> [qty]`: Buys an item from the shop.\n"
+        f"`!sell <item> [qty]`: Sells an item from your inventory."
     )
-    embed.add_field(name="__Ban Request Command__", value=ban_request_desc, inline=False)
+    economy_commands_desc_2 = (
+        f"`!inventory`: Views your current items.\n"
+        f"`!use <item>`: Uses a consumable item.\n"
+        f"`!craft <recipe>`: Crafts an item.\n"
+        f"`!recipes`: Views available crafting recipes.\n"
+        f"`!iteminfo <item>`: Gets info about an item.\n"
+        f"`!richest`: Shows the leaderboard of richest users.\n"
+        f"`!coinflip <amount> [h/t]`: Bets coins on a coin flip."
+    )
+    embed.add_field(name="__Economy Commands__", value=economy_commands_desc_1, inline=False)
+    embed.add_field(name="\u200b", value=economy_commands_desc_2, inline=False)
 
-    # --- Economy Commands ---
-    economy_commands_desc = (
-        f"`!balance`: Check your current coin balance.\n"
-        f"`!daily`: Claim your daily coin bonus.\n"
-        f"`!daily_streak`: Displays your current daily claim streak.\n"
-        f"`!transfer <@user> <amount>`: Send coins to another user.\n"
-        f"`!shop [category]`: View items available for purchase.\n"
-        f"`!buy <item_name> [quantity]`: Buy an item from the shop.\n"
-        f"`!sell <item_name> [quantity]`: Sell an item from your inventory.\n"
-        f"`!inventory`: View your current items.\n"
-        f"`!use <item_name>`: Use a consumable item from your inventory.\n"
-        f"`!craft <recipe_name>`: Craft an item from ingredients.\n"
-        f"`!recipes`: View available crafting recipes.\n"
-        f"`!iteminfo <item_name>`: Get information about a specific item.\n"
-        f"`!richest`: See the top users by coin balance.\n"
-        f"`!coinflip <amount> [heads/tails]`: Bet coins on a coin flip."
+    # --- Anti-Nuke and Ban Request Commands ---
+    security_commands_desc = (
+        f"`!banrequest`: Initiates a ban request via DM.\n"
+        f"`!antinuke <subcommand>`: Manages the anti-nuke system. Use `!antinuke` for details."
     )
-    embed.add_field(name="__Economy Commands__", value=economy_commands_desc, inline=False)
+    embed.add_field(name="__Security & Special Commands__", value=security_commands_desc, inline=False)
 
-    # --- Anti-Nuke System Commands ---
-    antinuke_commands_desc = (
-        f"`!antinuke enable/disable`: Toggles the anti-nuke system.\n"
-        f"`!antinuke status`: Shows the current anti-nuke configuration.\n"
-        f"`!antinuke safe_mode <on/off>`: Activates/deactivates safe mode.\n"
-        f"`!antinuke setthreshold <action_type> <count> <time_period_seconds>`: Configures threat thresholds.\n"
-        f"`!antinuke whitelist <add/remove> <@role/@user>`: Manages whitelist exemptions.\n"
-        f"`!antinuke log`: View recent anti-nuke system activities.\n"
-        f"`!antinuke setmodlog <#channel>`: Designates a channel for moderation logs."
-    )
-    embed.add_field(name="__Anti-Nuke System Commands__", value=antinuke_commands_desc, inline=False)
 
     await ctx.send(embed=embed)
 
