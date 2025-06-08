@@ -68,16 +68,16 @@ async def on_message(message):
             shipping_percentage = seed_value % 101 # Ensures a value between 0 and 100 inclusive.
 
             # Create a fun message based on the percentage.
-            if shipping_percentage < 20:
+            if shipping_percentage < 30:
                 emoji = "💔"
                 remark = "You are just not meant for eachother, give up. your cooked"
-            elif shipping_percentage < 50:
+            elif shipping_percentage < 60:
                 emoji = "😐"
                 remark = "Theres some potential, you just got to give all your time to eachother. ur not cooked"
-            elif shipping_percentage < 75:
+            elif shipping_percentage < 85:
                 emoji = "💖"
                 remark = "This strong connection twin you all are not cooked"
-            elif shipping_percentage < 90:
+            elif shipping_percentage < 95:
                 emoji = "💞"
                 remark = "your just made for eachother twin, yall gon die togetha"
             else:
