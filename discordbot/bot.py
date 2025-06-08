@@ -70,19 +70,19 @@ async def on_message(message):
             # Create a fun message based on the percentage.
             if shipping_percentage < 20:
                 emoji = "💔"
-                remark = "Hmm, maybe just friends. This group has some... interesting dynamics."
+                remark = "You are just not meant for eachother, give up. your cooked"
             elif shipping_percentage < 50:
                 emoji = "😐"
-                remark = "There's a spark, but it might need some fanning. Teamwork makes the dream work!"
+                remark = "Theres some potential, you just got to give all your time to eachother. ur not cooked"
             elif shipping_percentage < 75:
                 emoji = "💖"
-                remark = "A strong connection! This group could be something special."
+                remark = "This strong connection twin you all are not cooked"
             elif shipping_percentage < 90:
                 emoji = "💞"
-                remark = "Wow! A match made in heaven for this group!"
+                remark = "your just made for eachother twin, yall gon die togetha"
             else:
                 emoji = "❤️‍🔥"
-                remark = "Soulmates confirmed for the whole group! Get ready for fireworks!"
+                remark = "Yall jus soulmates, yall might aswell kiss gng. yall forever"
 
             # Format the list of names for display in the embed description.
             names_display = ' & '.join(names)
